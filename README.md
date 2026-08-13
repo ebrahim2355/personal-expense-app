@@ -1,9 +1,9 @@
 # Household Expenses
 
 Private, offline-first Android expense sharing for Sumon and Ebrahim. This
-monorepo currently contains a production-oriented v1 Express/PostgreSQL backend
-and a minimal Flutter Android shell. The Flutter expense, authentication, and
-sync features remain future milestones.
+monorepo contains a production-oriented v1 Express/PostgreSQL backend and a
+Flutter Android shell with its offline-first persistence, secure-session HTTP,
+and synchronization layers ready for the later screen milestone.
 
 Money is BDT only and is represented as integer poisha. The API never accepts a
 floating-point or decimal money value.
@@ -12,7 +12,7 @@ floating-point or decimal money value.
 
 ```text
 apps/api                    Express 5, TypeScript, Prisma/PostgreSQL backend
-apps/mobile                 Flutter Android shell (not an npm workspace)
+apps/mobile                 Flutter Android offline data layer and shell
 packages/contracts          authoritative OpenAPI 3.1 contract
 docs                        product, architecture, and delivery guidance
 ```
@@ -203,6 +203,7 @@ Flutter checks run from `apps/mobile`:
 
 ```powershell
 flutter pub get
+dart run build_runner build
 dart format --output=none --set-exit-if-changed .
 flutter analyze
 flutter test
@@ -210,8 +211,26 @@ flutter build apk --debug
 ```
 
 Launch an Android device/emulator with `flutter devices`, then
-`flutter run -d <ANDROID_DEVICE_ID>`. The Android application ID is
-`com.sumonebrahim.houseexpenses`; change `namespace` and `applicationId` in
+`flutter run -d <ANDROID_DEVICE_ID>`. Debug builds default to
+`http://10.0.2.2:3000`, the Android Emulator mapping for the development PC.
+For another host or production, pass the URL explicitly:
+
+```powershell
+flutter run -d <ANDROID_DEVICE_ID> `
+  --dart-define=API_BASE_URL=http://192.168.1.20:3000
+flutter build apk --release `
+  --dart-define=API_BASE_URL=https://your-api.example
+```
+
+Release configuration requires HTTPS. The URL is not a secret; tokens and PINs
+must never be passed as Dart defines. If a Windows repository and pub cache are
+on different drives, set `$env:PUB_CACHE = (Join-Path (Get-Location)
+'.pub-cache')` from `apps/mobile`, rerun `flutter pub get`, and build. See
+[apps/mobile/README.md](apps/mobile/README.md) for the reason and data-layer
+behavior.
+
+The Android application ID is `com.sumonebrahim.houseexpenses`; change
+`namespace` and `applicationId` in
 `apps/mobile/android/app/build.gradle.kts`, the `MainActivity.kt` package/path,
 and signing configuration together before distribution.
 

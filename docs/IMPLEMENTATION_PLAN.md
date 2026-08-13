@@ -101,40 +101,52 @@ creates exactly one household with two Argon2id-hashed members; contract, lint,
 type-check, 28 tests, and production compilation pass. The test count may grow;
 behavioral coverage, not a fixed count, is authoritative.
 
-### Milestone 4 — Flutter domain and Drift foundation (next)
+### Milestone 4 — Flutter offline-first data layer (complete)
 
-Add packages through Flutter's package manager: Riverpod, Drift/SQLite, Dio,
-UUID, time-zone data, secure storage, connectivity trigger support, and Android
-WorkManager integration. Define immutable domain models and pure functions for:
+Resolved and pinned Riverpod, Drift/SQLite, Dio, UUID, secure storage,
+connectivity, WorkManager, and code-generation packages through Flutter pub.
+Delivered:
 
-- decimal-string BDT input to integer poisha;
-- integer BDT formatting;
-- per-expense payer-remainder allocation;
-- local Dhaka date-range boundaries;
-- paid/allocated/balance/settlement totals.
+- immutable expense/session models with integer-only `amountMinor`;
+- Drift expense, durable outbox, and sync metadata tables with generated code;
+- transactional local create/edit/soft-delete and immediate repository streams;
+- secure token storage, Dio transport, single-flight refresh, and retry-once;
+- serialized push/bootstrap/pull, frozen mutation semantics, idempotent lost
+  response recovery, dependency rebasing, transactional cursors, tombstones,
+  server-wins conflict notices, and bounded retry metadata;
+- Riverpod dependency injection with repository/application boundaries;
+- launch, resume, mutation, manual, live network-recovery, and best-effort
+  network-constrained WorkManager triggers.
 
-Then create Drift migrations for local expenses, immutable durable outbox items,
-and sync state. Do not call the API from widgets.
+Summary/date-range pure functions remain part of the screen/dashboard milestone;
+no current data-layer code converts money through floating point.
 
 Checks:
 
 ```powershell
 Set-Location apps/mobile
 flutter pub get
+dart run build_runner build
 dart format --output=none --set-exit-if-changed .
 flutter analyze
 flutter test
+$env:PUB_CACHE = (Join-Path (Get-Location) '.pub-cache') # if drives differ
+flutter pub get
+flutter build apk --debug
 ```
 
-Exit criterion: boundary examples from the product spec pass as pure tests and a
-Drift transaction proves every optimistic local write has durable sync intent.
+Exit criterion met for the data layer: fake-API tests prove immediate local
+reads, durable intent, idempotent retry, single-flight sync, cursor pagination,
+tombstones, conflicts, refresh-once, and local-data retention. The debug APK
+builds; final dashboard calculation tests remain intentionally in milestone 6.
 
 ### Milestone 5 — Flutter authentication and first bootstrap
 
-Implement the fixed member selector/PIN screen, secure token storage, Dio bearer
-interceptor, single-flight refresh, logout/lock behavior, and first-device
-bootstrap. A first installation must authenticate online. Cached local data stays
-available during transient HTTP absence after a prior session.
+Build the fixed member selector/PIN screen and logout/lock presentation on the
+implemented authentication repository, secure token store, refresh-once client,
+and first-device bootstrap coordinator. A first installation must authenticate
+online. Cached local data stays available during transient HTTP absence after a
+prior session.
 
 Checks add mocked HTTP contract tests for login/refresh/logout and a PostgreSQL
 API + Android/Flutter integration scenario for paginated bootstrap followed by a
@@ -156,13 +168,14 @@ expenses, deleted rows, empty ranges, and exact Dhaka month boundaries.
 Exit criterion: all product-spec screen and validation acceptance criteria pass
 offline without waiting for HTTP.
 
-### Milestone 7 — full sync coordinator and Android triggers
+### Milestone 7 — sync UI integration and multi-device convergence
 
-Implement single-flight pull/push/reconcile cycles, dependency-ready outbox
-ordering, immutable retry semantics, `originMutationId` lost-response
-acknowledgement, server-wins conflict transactions, permanent rejection state,
-bounded backoff/jitter, `Retry-After`, and triggers on launch/resume/mutation/manual
-refresh/live network recovery/best-effort WorkManager.
+Integrate the completed sync coordinator with pull-to-refresh, pending/error
+indicators, conflict messages, and authentication screens. Exercise the existing
+dependency-ready outbox ordering, immutable retry semantics,
+`originMutationId` acknowledgement, server-wins conflict transaction, permanent
+rejection state, backoff, and all foreground/background triggers against two
+real app installations and the staging API.
 
 Exit criterion: two devices converge across offline create/update/delete,
 duplicate delivery, lost responses, pagination, conflicts, and tombstones.

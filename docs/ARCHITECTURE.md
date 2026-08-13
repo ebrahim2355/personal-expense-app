@@ -14,7 +14,7 @@ Railway PostgreSQL
 ```
 
 The API is the authentication and canonical synchronization boundary. Flutter
-will render from Drift and compute dashboard totals locally, so dashboard data
+renders from Drift and will compute dashboard totals locally, so expense data
 remains available offline. There is no server summary endpoint.
 
 The repository's only HTTP contract is
@@ -38,6 +38,49 @@ behaviorally identical to that contract.
 
 Express and Prisma types do not leak into the public domain model. API request
 bodies are reconstructed from Zod-validated fields; there is no mass assignment.
+
+## 2.1 Implemented mobile data boundaries
+
+- `lib/src/domain`: immutable expense/session models and exact wire-enum
+  mappings. `amountMinor` is a Dart `int`; no money path uses `double`.
+- `lib/src/data/local`: Drift tables, generated database code, row/domain
+  mapping, and explicit schema migration strategy.
+- `lib/src/data/remote`: contract DTOs, Dio transport, error classification,
+  and an authenticated request client.
+- `lib/src/data/security`: token-store abstraction and Android secure-storage
+  implementation. Tokens never enter Drift or ordinary preferences.
+- `lib/src/data/repositories`: UI-facing expense/authentication operations.
+- `lib/src/application`: session state, serialized sync, conflict notices, and
+  launch/resume/mutation/manual/connectivity triggers.
+- `lib/src/background`: network-constrained, best-effort Android WorkManager
+  scheduling and headless synchronization.
+- `lib/src/providers.dart`: Riverpod dependency graph. Widgets consume domain
+  streams and application services, never raw Drift or Dio objects.
+
+The local schema has three tables:
+
+1. `local_expenses` stores server-compatible fields, the authoritative server
+   version/timestamps when known, a local modification instant, soft deletion,
+   and `SYNCED`, `PENDING`, or `NEEDS_ATTENTION` projection state.
+2. `outbox_mutations` stores an auto-incrementing local order, unique mutation
+   UUID, entity UUID, action, base version, frozen JSON payload, creation time,
+   attempt count/times, retry deadline, last error code, and status.
+3. `sync_metadata` is a singleton holding household/member identity, the last
+   committed opaque cursor, and resumable bootstrap token/watermark. It does
+   not hold access or refresh tokens.
+
+Create/edit/delete writes the projection and outbox in one SQLite transaction,
+then emits a trigger after commit. Sync claims at most the earliest unresolved
+mutation per entity, allowing independent entities in one server batch while
+preserving per-entity dependencies. An accepted result deletes its receipt and
+rebases the next local mutation. A conflict deletes that entity's dependent
+outbox chain, stores the returned server snapshot/tombstone, and emits a UI
+notice. Validation/protocol failures stop blind retries; transient HTTP/network
+failures persist capped exponential backoff with jitter and honor `Retry-After`.
+
+A 401 causes one single-flight refresh-token rotation and exactly one retry of
+the original request. A failed refresh clears secure tokens and moves session
+state to signed out without deleting expenses, sync metadata, or outbox rows.
 
 ## 3. Canonical PostgreSQL model
 
@@ -207,9 +250,10 @@ First-device bootstrap:
    changed during pagination before sync is declared complete.
 
 Connectivity state is only a trigger. HTTP success/failure is authoritative.
-The mobile coordinator must serialize runs, keep frozen outbox semantics, use
-bounded exponential backoff/jitter, honor `Retry-After`, and avoid blind retries
-for auth/validation failures. Android WorkManager is best-effort; Android cannot
+The mobile coordinator serializes runs, keeps frozen outbox semantics, uses
+bounded exponential backoff/jitter, honors `Retry-After`, and avoids blind
+retries for auth/validation failures. Android WorkManager remains best-effort;
+Android cannot
 guarantee immediate or exact background execution.
 
 ## 8. Money and time ownership
@@ -255,7 +299,11 @@ Migrations and provisioning never print credentials.
 
 ## 10. Required verification
 
-The committed suite covers login/failure/unauthorized requests, refresh rotation
+The Flutter suite uses in-memory Drift and fake HTTP/sync boundaries to cover
+immediate offline reads, mutation retry/idempotency, concurrent trigger
+single-flight behavior, change pagination, bootstrap handoff, tombstones, conflicts,
+refresh-once behavior, and local-data retention after auth/network failure.
+The backend suite covers login/failure/unauthorized requests, refresh rotation
 and logout, validation/money boundaries, Dhaka-to-UTC boundaries, duplicate and
 concurrent offline creates, update/delete propagation, stale-version conflict,
 cursor/bootstrap pagination, tombstones, and household isolation. Integration
