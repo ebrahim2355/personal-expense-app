@@ -29,6 +29,7 @@
     "prebuild": "prisma generate",
     "test:unit": "vitest run --exclude test/integration/**",
     "test:integration": "vitest run test/integration",
+    "test:reset": "tsx scripts/reset-test-database.ts",
     "members:provision": "tsx scripts/bootstrap.ts",
     "prisma:migrate:test": "prisma migrate deploy"
   },

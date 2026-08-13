@@ -13,11 +13,15 @@ import type { AuthenticatedMember } from '../../src/domain/models.js';
 import { createLogger } from '../../src/infrastructure/logger.js';
 import { createPrismaClient } from '../../src/infrastructure/prisma.js';
 import { TokenService } from '../../src/infrastructure/token-service.js';
+import { checkedTestDatabaseUrl } from '../support/test-database.js';
 
+const checkedDatabaseUrl = checkedTestDatabaseUrl(
+  process.env.TEST_DATABASE_URL,
+);
 const databaseUrl =
-  process.env.TEST_DATABASE_URL ??
+  checkedDatabaseUrl ??
   'postgresql://integration-tests-disabled:unused@127.0.0.1:1/unused';
-const hasTestDatabase = process.env.TEST_DATABASE_URL !== undefined;
+const hasTestDatabase = checkedDatabaseUrl !== undefined;
 const integration = describe.skipIf(!hasTestDatabase);
 const pinPepper = 'integration-test-pepper';
 const sumonPin = '111111';
