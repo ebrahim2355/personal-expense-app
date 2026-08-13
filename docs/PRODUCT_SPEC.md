@@ -84,13 +84,13 @@ Android may defer or suppress background work because of battery, network, vendo
   - settlement text.
 - Show active expenses in reverse occurrence order with formatted amount, category, payer, occurrence date, and note preview when present.
 - Provide add, tap-to-view/edit, pull/manual refresh, pending-sync indicator, and offline/sync-error feedback.
-- An empty range shows zero-valued totals, “Settled up”, and an empty-state message.
+- An empty range shows zero-valued totals, “All settled”, and an empty-state message.
 
 ### 5.3 Add/edit expense
 
 - Required fields: amount, category, payer, and occurrence date/time.
 - Optional field: note.
-- Defaults on add: signed-in member as payer, current date/time in `Asia/Dhaka`, no category preselected unless the UI clearly requires a user choice, and empty note.
+- Defaults on add: signed-in member as payer, current date/time in `Asia/Dhaka`, Groceries as the initial quick-entry category, and empty note. The member may change category or payer before saving.
 - Display an existing active expense's fields on edit.
 - Parse and validate before committing. A successful save is one local database transaction containing the optimistic expense projection and its outbox mutation.
 - Disable duplicate save taps while the local transaction is in progress. Returning to the dashboard shows the local result immediately.
@@ -101,9 +101,16 @@ Android may defer or suppress background work because of battery, network, vendo
 - Deletion requires confirmation naming the expense amount/category or occurrence date.
 - Confirmed deletion writes a local tombstone and outbox mutation in one transaction. Deleted items are excluded from normal lists and calculations.
 
-### 5.5 Conflict and sync feedback
+### 5.5 Expense history and settings
 
-- A version conflict replaces the optimistic local expense with the server snapshot (including a server tombstone), removes the conflicting and dependent queued mutations for that expense, and shows a short message such as “Expense changed on another device. Latest version kept.”
+- History is newest first and filters active local rows by an inclusive displayed date range, payer, and fixed category.
+- A subtle row state distinguishes acknowledged, waiting-to-sync, and needs-attention changes without preventing edit/delete.
+- Settings shows the signed-in member, API environment/host label, app version, manual sync, logout, and a short local-data explanation.
+- Logout attempts refresh-token revocation, always clears Android secure tokens locally, and does not delete Drift expenses or queued mutations if the API is unavailable.
+
+### 5.6 Conflict and sync feedback
+
+- A version conflict replaces the optimistic local expense with the server snapshot (including a server tombstone), removes the conflicting and dependent queued mutations for that expense, and briefly says “This expense changed elsewhere. Server data was kept.”
 - A transient sync failure leaves local changes pending and does not block local work.
 - A server validation rejection marks the affected item as needing attention and shows an actionable error; it must not be retried indefinitely.
 - Connectivity status can trigger an attempt, but the UI calls the service reachable only after an HTTP success.
@@ -177,7 +184,7 @@ Settlement text:
 
 - `sumonBalance > 0`: “Ebrahim owes Sumon {abs(sumonBalance)}”.
 - `sumonBalance < 0`: “Sumon owes Ebrahim {abs(sumonBalance)}”.
-- `sumonBalance == 0`: “Settled up”.
+- `sumonBalance == 0`: “All settled”.
 
 All interpolated amounts use BDT formatting.
 

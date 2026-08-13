@@ -49,7 +49,7 @@ flutter test
 flutter build apk --debug
 ```
 
-### Milestone 3 — production v1 backend (complete in this change)
+### Milestone 3 — production v1 backend (complete)
 
 Delivered:
 
@@ -118,9 +118,6 @@ Delivered:
 - launch, resume, mutation, manual, live network-recovery, and best-effort
   network-constrained WorkManager triggers.
 
-Summary/date-range pure functions remain part of the screen/dashboard milestone;
-no current data-layer code converts money through floating point.
-
 Checks:
 
 ```powershell
@@ -138,44 +135,61 @@ flutter build apk --debug
 Exit criterion met for the data layer: fake-API tests prove immediate local
 reads, durable intent, idempotent retry, single-flight sync, cursor pagination,
 tombstones, conflicts, refresh-once, and local-data retention. The debug APK
-builds; final dashboard calculation tests remain intentionally in milestone 6.
+builds.
 
-### Milestone 5 — Flutter authentication and first bootstrap
+### Milestone 5 — Flutter authentication and first bootstrap (complete)
 
-Build the fixed member selector/PIN screen and logout/lock presentation on the
-implemented authentication repository, secure token store, refresh-once client,
-and first-device bootstrap coordinator. A first installation must authenticate
-online. Cached local data stays available during transient HTTP absence after a
-prior session.
+Delivered the fixed member selector/PIN screen, generic and offline error states,
+persisted member identity restoration, secure-token session gate, best-effort
+server refresh-token revocation on logout, and local credential clearing without
+deleting expenses/outbox data. First-device bootstrap continues through the
+existing coordinator immediately after an online login.
 
-Checks add mocked HTTP contract tests for login/refresh/logout and a PostgreSQL
-API + Android/Flutter integration scenario for paginated bootstrap followed by a
-post-watermark pull.
+Verification includes login widget states plus existing refresh-once, auth-expiry,
+paginated bootstrap, and local-data-retention tests.
 
-Exit criterion: tokens never enter Drift/logs; every bootstrap page is applied
-before its watermark is committed; auth rejection locks the app without silently
-deleting pending local household data.
+### Milestone 6 — Flutter expense UI and dashboard (complete)
 
-### Milestone 6 — Flutter expense UI and dashboard
+Delivered:
 
-Build the dashboard/list, date-range control, add/view/edit/delete flows, payer
-default/selector, validation, pending/offline state, and conflict message. Reads
-remain Drift queries. Saves/deletes remain local projection + outbox transactions.
+- Material 3 dashboard with current Dhaka month, date ranges, local totals,
+  per-member paid/allocated amounts, exact settlement, recent/empty states, and
+  pull/manual refresh;
+- deterministic BDT string parsing/formatting and pure integer split/summary;
+- quick add/edit with logged-in payer default, fixed category selection, Dhaka
+  date/time, note validation, keyboard-safe scrolling, and duplicate-submit guard;
+- newest-first history with date/payer/category filters, edit, and confirmed
+  local soft delete;
+- settings/account with member, API environment, app version, manual sync,
+  local-data/background-sync explanation, and logout;
+- pending/offline/error state plus server-wins conflict notices.
 
-Checks include widget tests and pure totals for even/odd poisha, multiple
-expenses, deleted rows, empty ranges, and exact Dhaka month boundaries.
+Checks:
 
-Exit criterion: all product-spec screen and validation acceptance criteria pass
-offline without waiting for HTTP.
+```powershell
+Set-Location apps/mobile
+flutter pub get
+dart run build_runner build
+dart format --output=none --set-exit-if-changed .
+flutter analyze
+flutter test
+flutter build apk --debug
+```
 
-### Milestone 7 — sync UI integration and multi-device convergence
+Pure and widget coverage includes amount boundaries, exact BDT display,
+even/odd settlement examples, deleted rows, Dhaka midnight/month boundaries,
+login errors, dashboard/empty states, 320-pixel enlarged-text layout, offline
+add, duplicate submission, edit, deletion confirmation, sync state, and conflict
+feedback.
 
-Integrate the completed sync coordinator with pull-to-refresh, pending/error
-indicators, conflict messages, and authentication screens. Exercise the existing
+### Milestone 7 — staging multi-device convergence (next)
+
+The sync coordinator is now connected to pull/manual refresh, pending/error
+indicators, conflict messages, and authentication screens. Next, exercise the
 dependency-ready outbox ordering, immutable retry semantics,
 `originMutationId` acknowledgement, server-wins conflict transaction, permanent
 rejection state, backoff, and all foreground/background triggers against two
-real app installations and the staging API.
+real Android installations and the staging API.
 
 Exit criterion: two devices converge across offline create/update/delete,
 duplicate delivery, lost responses, pagination, conflicts, and tombstones.

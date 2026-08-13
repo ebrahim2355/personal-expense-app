@@ -2,8 +2,8 @@
 
 Private, offline-first Android expense sharing for Sumon and Ebrahim. This
 monorepo contains a production-oriented v1 Express/PostgreSQL backend and a
-Flutter Android shell with its offline-first persistence, secure-session HTTP,
-and synchronization layers ready for the later screen milestone.
+Flutter Android client with its complete v1 screens, offline-first persistence,
+secure-session HTTP, and synchronization layers.
 
 Money is BDT only and is represented as integer poisha. The API never accepts a
 floating-point or decimal money value.
@@ -12,7 +12,7 @@ floating-point or decimal money value.
 
 ```text
 apps/api                    Express 5, TypeScript, Prisma/PostgreSQL backend
-apps/mobile                 Flutter Android offline data layer and shell
+apps/mobile                 Flutter Android local-first app
 packages/contracts          authoritative OpenAPI 3.1 contract
 docs                        product, architecture, and delivery guidance
 ```
@@ -234,11 +234,20 @@ The Android application ID is `com.sumonebrahim.houseexpenses`; change
 `apps/mobile/android/app/build.gradle.kts`, the `MainActivity.kt` package/path,
 and signing configuration together before distribution.
 
-## Railway deployment
+The mobile app now includes the fixed-member PIN login, local SQLite dashboard,
+date-range totals and settlement, quick add/edit, filtered expense history,
+confirmed soft deletion, pending/offline/conflict feedback, and account/settings
+screen. Dashboard calculations use only active Drift rows and integer poisha.
+The default range is the current `Asia/Dhaka` month. The Settings screen labels
+the API environment and explains that Android background sync is best effort,
+not immediate. See [apps/mobile/README.md](apps/mobile/README.md) for the screen
+and verification details.
 
 Create a Railway PostgreSQL service and an API service from this shared npm
 monorepo. Keep the repository root as the service root so the workspace lockfile
 and generated Prisma client are available. Configure:
+## Railway deployment
+
 
 ```text
 Build command:      npm ci && npm run build --workspace @expenses/api

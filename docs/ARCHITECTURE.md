@@ -52,6 +52,10 @@ bodies are reconstructed from Zod-validated fields; there is no mass assignment.
 - `lib/src/data/repositories`: UI-facing expense/authentication operations.
 - `lib/src/application`: session state, serialized sync, conflict notices, and
   launch/resume/mutation/manual/connectivity triggers.
+- `lib/src/presentation`: Material 3 login, dashboard, add/edit, history,
+  settings, reusable expense/sync widgets, and Riverpod view state. Widgets use
+  repository/domain abstractions and primitive status streams rather than Drift
+  rows or Dio.
 - `lib/src/background`: network-constrained, best-effort Android WorkManager
   scheduling and headless synchronization.
 - `lib/src/providers.dart`: Riverpod dependency graph. Widgets consume domain
@@ -66,7 +70,8 @@ The local schema has three tables:
    UUID, entity UUID, action, base version, frozen JSON payload, creation time,
    attempt count/times, retry deadline, last error code, and status.
 3. `sync_metadata` is a singleton holding household/member identity, the last
-   committed opaque cursor, and resumable bootstrap token/watermark. It does
+   committed opaque cursor, resumable bootstrap token/watermark, and the last
+   successful full-sync instant used by the UI. It does
    not hold access or refresh tokens.
 
 Create/edit/delete writes the projection and outbox in one SQLite transaction,
@@ -301,8 +306,12 @@ Migrations and provisioning never print credentials.
 
 The Flutter suite uses in-memory Drift and fake HTTP/sync boundaries to cover
 immediate offline reads, mutation retry/idempotency, concurrent trigger
-single-flight behavior, change pagination, bootstrap handoff, tombstones, conflicts,
-refresh-once behavior, and local-data retention after auth/network failure.
+single-flight behavior, change pagination, bootstrap handoff, tombstones,
+conflicts, refresh-once behavior, and local-data retention after auth/network
+failure. Pure tests cover BDT parsing/formatting, odd-poisha allocation,
+settlement, and IANA `Asia/Dhaka` month/day boundaries. Widget tests cover login
+errors, exact dashboard totals, empty/small-screen states, local add/edit/delete,
+duplicate submission, offline status, and server-wins conflict feedback.
 The backend suite covers login/failure/unauthorized requests, refresh rotation
 and logout, validation/money boundaries, Dhaka-to-UTC boundaries, duplicate and
 concurrent offline creates, update/delete propagation, stale-version conflict,

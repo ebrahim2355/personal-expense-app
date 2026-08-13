@@ -1,9 +1,26 @@
 # Household Expenses mobile
 
-Android Flutter client for the Sumon/Ebrahim household. The current milestone
-implements the offline-first data layer and keeps the development shell UI.
-Screens consume repositories and Riverpod providers; they do not depend on raw
-Dio or Drift types.
+Android Flutter client for the Sumon/Ebrahim household. Screens consume domain
+models, repositories, and Riverpod presentation providers; they do not depend
+on raw Dio or Drift implementation types.
+
+## Implemented screens
+
+- Login: fixed Sumon/Ebrahim selector, obscured numeric PIN, generic credential
+  errors, and explicit first-login connectivity guidance.
+- Dashboard: current `Asia/Dhaka` month by default, exact BDT totals, paid and
+  allocated amounts, settlement, recent expenses, date-range selection, and
+  non-blocking sync/offline state.
+- Add/edit: string-to-poisha amount validation, category and payer selectors,
+  Dhaka date/time, 500-code-point note, and a duplicate-submit guard.
+- History: newest-first local rows with date, payer, and category filters plus
+  edit and confirmed soft deletion.
+- Settings: signed-in member, API environment, app version, manual sync, logout,
+  and a concise local-data/background-sync explanation.
+
+Material 3 controls retain at least 48 logical-pixel tap targets. Layout tests
+cover a 320-pixel-wide surface with enlarged text. All visible totals are pure
+integer calculations over active local rows, so they continue to work offline.
 
 ## API configuration
 
@@ -30,6 +47,10 @@ secure storage; Drift stores expense/outbox/sync metadata but no credentials.
 
 ## Generate and verify
 
+`timezone` supplies the IANA `Asia/Dhaka` calendar boundaries; `package_info_plus`
+supplies the Settings version label. Both are resolved through Flutter pub and
+pinned in `pubspec.lock`.
+
 The generated Drift database is committed so a clone analyzes immediately.
 Regenerate it whenever `app_database.dart` changes:
 
@@ -54,6 +75,14 @@ flutter build apk --debug
 
 `.pub-cache` is ignored. This workaround is only for the local Windows tool
 layout and does not change application behavior.
+
+If a failed build already started Kotlin with the cross-drive cache, stop that
+generated daemon state once before retrying:
+
+```powershell
+android\gradlew.bat --stop
+flutter clean
+```
 
 ## Implemented data boundaries
 
