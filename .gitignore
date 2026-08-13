@@ -61,6 +61,7 @@ apps/api/src/generated/
 build/
 doc/api/
 *.g.dart
+!apps/mobile/lib/src/data/local/app_database.g.dart
 *.freezed.dart
 *.mocks.dart
 apps/mobile/lib/generated/

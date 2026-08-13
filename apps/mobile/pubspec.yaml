@@ -7,17 +7,23 @@ environment:
   sdk: ^3.13.0
 
 dependencies:
+  connectivity_plus: ^7.3.1
   dio: ^5.11.0
   drift: ^2.34.3
   drift_flutter: ^0.3.1
   flutter:
     sdk: flutter
   flutter_riverpod: ^2.6.1
+  flutter_secure_storage: 10.0.0
+  uuid: ^4.6.0
+  workmanager: ^0.10.7
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  build_runner: ^2.16.0
+  drift_dev: ^2.34.5
 
 flutter:
   uses-material-design: true
