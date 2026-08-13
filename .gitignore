@@ -1,0 +1,93 @@
+# Operating-system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.code-workspace
+*.iml
+*.ipr
+*.iws
+*.swp
+*.swo
+*~
+
+# Environment and local configuration (examples remain tracked)
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.local
+local.properties
+
+# Logs and runtime artifacts
+*.log
+logs/
+*.pid
+*.pid.lock
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Node.js and TypeScript
+node_modules/
+dist/
+coverage/
+.nyc_output/
+.eslintcache
+.npm/
+.cache/
+*.tsbuildinfo
+
+# Prisma and local databases
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
+apps/api/src/generated/
+
+# Dart and Flutter
+.dart_tool/
+.packages
+.pub-cache/
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+doc/api/
+*.g.dart
+*.freezed.dart
+*.mocks.dart
+apps/mobile/lib/generated/
+apps/mobile/coverage/
+
+# Android/Gradle output
+.gradle/
+**/android/.gradle/
+**/android/captures/
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Android signing material
+key.properties
+*.jks
+*.keystore
+*.p12
+*.pem
+*.der
+
+# Test and tool reports
+test-results/
+reports/
+junit.xml
+lcov.info
