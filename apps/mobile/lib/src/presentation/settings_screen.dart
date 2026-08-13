@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../application/sync_coordinator.dart';
 import '../domain/session.dart';
 import '../providers.dart';
 import 'common_widgets.dart';
@@ -39,6 +41,10 @@ final class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         const SizedBox(height: 12),
         const SyncStatusCard(),
+        if (kDebugMode) ...<Widget>[
+          const SizedBox(height: 12),
+          const _DebugSyncDiagnosticsCard(),
+        ],
         const SizedBox(height: 20),
         Text('App', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 6),
@@ -143,5 +149,81 @@ final class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
     setState(() => _loggingOut = true);
     await ref.read(authRepositoryProvider).logout();
+  }
+}
+
+final class _DebugSyncDiagnosticsCard extends ConsumerWidget {
+  const _DebugSyncDiagnosticsCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final cursor = ref.watch(syncCursorProvider).valueOrNull;
+    final pending = ref.watch(unresolvedMutationCountProvider).valueOrNull;
+    final report = ref.watch(syncReportProvider).valueOrNull;
+    final lastSync = ref.watch(lastSuccessfulSyncProvider).valueOrNull;
+    return Card(
+      key: const Key('debug-sync-diagnostics'),
+      margin: EdgeInsets.zero,
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Row(
+              children: <Widget>[
+                const Icon(Icons.bug_report_outlined, size: 20),
+                const SizedBox(width: 8),
+                Text(
+                  'Debug sync diagnostics',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _DiagnosticLine(label: 'Cursor', value: _cursorPreview(cursor)),
+            _DiagnosticLine(
+              label: 'Pending',
+              value: pending?.toString() ?? 'loading',
+            ),
+            _DiagnosticLine(
+              label: 'Last result',
+              value: _outcomeName(report?.outcome),
+            ),
+            _DiagnosticLine(
+              label: 'Last success',
+              value: lastSync?.toUtc().toIso8601String() ?? 'none',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _cursorPreview(String? cursor) {
+    if (cursor == null) {
+      return 'none';
+    }
+    const visibleLength = 24;
+    return cursor.length <= visibleLength
+        ? cursor
+        : '${cursor.substring(0, visibleLength)}… (${cursor.length} chars)';
+  }
+
+  String _outcomeName(SyncOutcome? outcome) => outcome?.name ?? 'none';
+}
+
+final class _DiagnosticLine extends StatelessWidget {
+  const _DiagnosticLine({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Text('$label: $value'),
+    );
   }
 }

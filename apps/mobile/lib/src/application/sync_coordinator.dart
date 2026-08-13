@@ -72,10 +72,15 @@ final class SyncCoordinator {
   final int pageSize;
   final StreamController<SyncNotice> _notices =
       StreamController<SyncNotice>.broadcast();
+  final StreamController<SyncReport> _reports =
+      StreamController<SyncReport>.broadcast();
 
   Future<SyncReport>? _activeRun;
+  SyncReport? _lastReport;
 
   Stream<SyncNotice> get notices => _notices.stream;
+  Stream<SyncReport> get reports => _reports.stream;
+  SyncReport? get lastReport => _lastReport;
   bool get isRunning => _activeRun != null;
 
   Future<SyncReport> synchronize() {
@@ -100,20 +105,27 @@ final class SyncCoordinator {
             updatedAt: Value<DateTime>(completedAt),
           ),
         );
-        completer.complete(const SyncReport(SyncOutcome.completed));
+        _completeRun(completer, const SyncReport(SyncOutcome.completed));
       } on AuthenticationExpiredException catch (error) {
-        completer.complete(
+        _completeRun(
+          completer,
           SyncReport(SyncOutcome.authenticationRequired, error: error),
         );
       } on NetworkException catch (error) {
-        completer.complete(SyncReport(SyncOutcome.offline, error: error));
+        _completeRun(completer, SyncReport(SyncOutcome.offline, error: error));
       } catch (error) {
-        completer.complete(SyncReport(SyncOutcome.failed, error: error));
+        _completeRun(completer, SyncReport(SyncOutcome.failed, error: error));
       } finally {
         _activeRun = null;
       }
     }();
     return completer.future;
+  }
+
+  void _completeRun(Completer<SyncReport> completer, SyncReport report) {
+    _lastReport = report;
+    _reports.add(report);
+    completer.complete(report);
   }
 
   Future<void> _resetInterruptedMutations() async {
@@ -518,5 +530,8 @@ final class SyncCoordinator {
         );
   }
 
-  Future<void> close() => _notices.close();
+  Future<void> close() async {
+    await _notices.close();
+    await _reports.close();
+  }
 }

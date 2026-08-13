@@ -22,6 +22,22 @@ final lastSuccessfulSyncProvider = StreamProvider<DateTime?>((ref) {
       .map((metadata) => metadata.lastSuccessfulSyncAt?.toUtc());
 });
 
+final syncCursorProvider = StreamProvider<String?>((ref) {
+  return ref
+      .watch(appDatabaseProvider)
+      .watchSyncMetadata()
+      .map((metadata) => metadata.lastCursor);
+});
+
+final syncReportProvider = StreamProvider<SyncReport>((ref) async* {
+  final coordinator = ref.watch(syncCoordinatorProvider);
+  final current = coordinator.lastReport;
+  if (current != null) {
+    yield current;
+  }
+  yield* coordinator.reports;
+});
+
 final unresolvedMutationCountProvider = StreamProvider<int>((ref) {
   return ref.watch(appDatabaseProvider).watchUnresolvedMutationCount();
 });
