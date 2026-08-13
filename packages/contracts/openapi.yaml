@@ -1,45 +1,738 @@
 openapi: 3.1.0
 info:
   title: Household Expenses API
-  version: 0.1.0
+  version: 1.0.0
   description: >-
-    The single HTTP contract for the household expense application. This
-    scaffold exposes only liveness; authentication and synchronization are
-    intentionally deferred to later milestones.
+    Canonical authentication and expense synchronization API for the fixed
+    Sumon/Ebrahim household. Money is represented only as integer BDT poisha.
+    Dashboard summaries are computed by Flutter from synchronized local rows.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
 servers:
   - url: /
-    description: The host selected by the client or deployment.
+    description: Current deployment host.
 tags:
   - name: Operations
-    description: Service health endpoints.
+    description: Process and PostgreSQL health checks.
+  - name: Authentication
+    description: Fixed-member login and token lifecycle.
+  - name: Synchronization
+    description: Idempotent mutation push, change pull, and first-device bootstrap.
+security:
+  - bearerAuth: []
 paths:
   /health/live:
     get:
-      tags:
-        - Operations
+      tags: [Operations]
       operationId: getLiveness
-      summary: Check whether the API process is running
+      summary: Check process liveness
       security: []
       responses:
         '200':
-          description: The API process is running.
+          description: The API process is running; the database is not checked.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/HealthResponse'
+                $ref: '#/components/schemas/LivenessResponse'
         '400':
-          description: The request could not be processed.
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /health/ready:
+    get:
+      tags: [Operations]
+      operationId: getReadiness
+      summary: Check PostgreSQL readiness
+      security: []
+      responses:
+        '200':
+          description: PostgreSQL is reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: PostgreSQL is not reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+  /health:
+    get:
+      tags: [Operations]
+      operationId: getCompositeHealth
+      summary: Check process health and PostgreSQL readiness
+      security: []
+      responses:
+        '200':
+          description: The process is running and PostgreSQL is reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompositeHealthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          description: The process is running but PostgreSQL is not reachable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompositeHealthResponse'
+  /v1/auth/login:
+    post:
+      tags: [Authentication]
+      operationId: login
+      summary: Authenticate one of the two fixed members
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authentication succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/auth/refresh:
+    post:
+      tags: [Authentication]
+      operationId: refreshSession
+      summary: Rotate a refresh token and issue a new session pair
+      description: >-
+        A successful call revokes the supplied token. Reuse of an already
+        rotated token revokes its active token family.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '200':
+          description: The refresh token was rotated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      summary: Revoke the supplied refresh token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+      responses:
+        '204':
+          description: Logout completed; an already invalid token is also accepted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/auth/me:
+    get:
+      tags: [Authentication]
+      operationId: getCurrentMember
+      summary: Return the authenticated fixed member
+      responses:
+        '200':
+          description: The access token belongs to an enabled member.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CurrentMemberResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/sync/mutations:
+    post:
+      tags: [Synchronization]
+      operationId: pushExpenseMutations
+      summary: Apply an ordered batch of durable client mutations
+      description: >-
+        Items are processed in request order, each in its own serializable
+        transaction. A conflict or rejection does not roll back accepted sibling
+        items. Retrying an identical mutationId returns its stored result;
+        reusing the ID for different semantics is rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MutationBatchRequest'
+      responses:
+        '200':
+          description: Every candidate has a corresponding result in request order.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MutationBatchResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /v1/sync/changes:
+    get:
+      tags: [Synchronization]
+      operationId: pullExpenseChanges
+      summary: Pull ordered changes after an opaque cursor
+      parameters:
+        - $ref: '#/components/parameters/ChangeCursor'
+        - $ref: '#/components/parameters/PageLimit'
+      responses:
+        '200':
+          description: An ordered page of changes, including deletion tombstones.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChangePage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /v1/sync/bootstrap:
+    get:
+      tags: [Synchronization]
+      operationId: bootstrapExpenses
+      summary: Bootstrap a first device from a stable watermark
+      description: >-
+        Start without pageToken. Persist the returned watermarkCursor only after
+        all bootstrap pages are applied, then pull /v1/sync/changes from that
+        watermark before declaring the first synchronization complete.
+      parameters:
+        - $ref: '#/components/parameters/BootstrapPageToken'
+        - $ref: '#/components/parameters/PageLimit'
+      responses:
+        '200':
+          description: A canonical expense page including existing tombstones.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BootstrapPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ChangeCursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque, signed cursor returned by a prior change/bootstrap response.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 2048
+    BootstrapPageToken:
+      name: pageToken
+      in: query
+      required: false
+      description: Opaque, signed page token from the preceding bootstrap page.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 4096
+    PageLimit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 250
+        default: 100
+  responses:
+    BadRequest:
+      description: Invalid JSON, HTTPS required, or another malformed request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Credentials or bearer/refresh token are invalid.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BodyTooLarge:
+      description: The JSON body exceeds the configured limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationFailed:
+      description: Input did not pass request-level validation.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: The configured per-window request limit was exceeded.
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds until another attempt should be made.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: An unexpected server error occurred.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unavailable:
+      description: A serializable transaction could not complete after bounded retries.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
   schemas:
-    HealthResponse:
+    MemberKey:
+      type: string
+      enum: [SUMON, EBRAHIM]
+    ExpenseCategory:
+      type: string
+      enum: [GROCERIES, UTILITIES, TRANSPORT, HOUSEHOLD, MEDICINE, OTHER]
+    MutationOperation:
+      type: string
+      enum: [CREATE, UPDATE, DELETE]
+    Member:
+      type: object
+      additionalProperties: false
+      required: [id, householdId, key, displayName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        householdId:
+          type: string
+          format: uuid
+        key:
+          $ref: '#/components/schemas/MemberKey'
+        displayName:
+          type: string
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [member, pin]
+      properties:
+        member:
+          $ref: '#/components/schemas/MemberKey'
+        pin:
+          type: string
+          pattern: '^\d{6,12}$'
+          writeOnly: true
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+          minLength: 80
+          maxLength: 200
+          writeOnly: true
+    AuthResponse:
       type: object
       additionalProperties: false
       required:
-        - status
+        - member
+        - accessToken
+        - accessTokenExpiresAt
+        - refreshToken
+        - refreshTokenExpiresAt
+      properties:
+        member:
+          $ref: '#/components/schemas/Member'
+        accessToken:
+          type: string
+        accessTokenExpiresAt:
+          type: string
+          format: date-time
+        refreshToken:
+          type: string
+        refreshTokenExpiresAt:
+          type: string
+          format: date-time
+    CurrentMemberResponse:
+      type: object
+      additionalProperties: false
+      required: [member]
+      properties:
+        member:
+          $ref: '#/components/schemas/Member'
+    ExpenseInput:
+      type: object
+      additionalProperties: false
+      required: [amountMinor, category, payer, occurredAt]
+      properties:
+        amountMinor:
+          type: integer
+          minimum: 1
+          maximum: 99999999999
+          description: BDT poisha; never a decimal BDT amount.
+        category:
+          $ref: '#/components/schemas/ExpenseCategory'
+        payer:
+          $ref: '#/components/schemas/MemberKey'
+        occurredAt:
+          type: string
+          format: date-time
+          description: An RFC 3339 timestamp with an explicit UTC offset.
+        note:
+          type: [string, 'null']
+          maxLength: 500
+    Expense:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - amountMinor
+        - category
+        - payer
+        - occurredAt
+        - note
+        - version
+        - updatedAt
+        - deletedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        amountMinor:
+          type: integer
+          minimum: 1
+          maximum: 99999999999
+        category:
+          $ref: '#/components/schemas/ExpenseCategory'
+        payer:
+          $ref: '#/components/schemas/MemberKey'
+        occurredAt:
+          type: string
+          format: date-time
+        note:
+          type: [string, 'null']
+          maxLength: 500
+        version:
+          type: integer
+          minimum: 1
+        updatedAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Non-null identifies a soft-delete tombstone.
+    MutationCandidate:
+      type: object
+      additionalProperties: false
+      required: [mutationId, entityId, operation, baseVersion]
+      description: >-
+        CREATE requires baseVersion 0 and ExpenseInput. UPDATE requires a positive
+        baseVersion and ExpenseInput. DELETE requires a positive baseVersion and
+        no expense. Operation-specific invalid data is returned as a REJECTED
+        result so valid siblings can still apply.
+      properties:
+        mutationId:
+          type: string
+          format: uuid
+          description: Unique durable outbox mutation UUID; never reuse it for another payload.
+        entityId:
+          type: string
+          format: uuid
+          description: Client-generated expense UUID.
+        operation:
+          $ref: '#/components/schemas/MutationOperation'
+        baseVersion:
+          type: integer
+          minimum: 0
+          maximum: 2147483646
+        expense:
+          $ref: '#/components/schemas/ExpenseInput'
+    MutationBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [mutations]
+      properties:
+        mutations:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/MutationCandidate'
+    AppliedMutationResult:
+      type: object
+      additionalProperties: false
+      required: [mutationId, status, expense]
+      properties:
+        mutationId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: APPLIED
+        expense:
+          $ref: '#/components/schemas/Expense'
+    ConflictMutationResult:
+      type: object
+      additionalProperties: false
+      required: [mutationId, status, code, expense]
+      properties:
+        mutationId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: CONFLICT
+        code:
+          type: string
+          enum: [ENTITY_EXISTS, VERSION_CONFLICT]
+        expense:
+          $ref: '#/components/schemas/Expense'
+    RejectedMutationResult:
+      type: object
+      additionalProperties: false
+      required: [mutationId, status, code]
+      properties:
+        mutationId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: REJECTED
+        code:
+          type: string
+          enum:
+            - ENTITY_ID_UNAVAILABLE
+            - ENTITY_NOT_FOUND
+            - IDEMPOTENCY_KEY_REUSED
+            - INVALID_MUTATION
+            - PAYER_NOT_FOUND
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ValidationIssue'
+    MutationResult:
+      oneOf:
+        - $ref: '#/components/schemas/AppliedMutationResult'
+        - $ref: '#/components/schemas/ConflictMutationResult'
+        - $ref: '#/components/schemas/RejectedMutationResult'
+      discriminator:
+        propertyName: status
+        mapping:
+          APPLIED: '#/components/schemas/AppliedMutationResult'
+          CONFLICT: '#/components/schemas/ConflictMutationResult'
+          REJECTED: '#/components/schemas/RejectedMutationResult'
+    MutationBatchResponse:
+      type: object
+      additionalProperties: false
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/MutationResult'
+    ExpenseChange:
+      type: object
+      additionalProperties: false
+      required: [cursor, entityType, operation, originMutationId, expense]
+      properties:
+        cursor:
+          type: string
+        entityType:
+          type: string
+          const: EXPENSE
+        operation:
+          type: string
+          enum: [CREATED, UPDATED, DELETED]
+        originMutationId:
+          type: string
+          format: uuid
+        expense:
+          $ref: '#/components/schemas/Expense'
+    ChangePage:
+      type: object
+      additionalProperties: false
+      required: [changes, nextCursor, hasMore]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExpenseChange'
+        nextCursor:
+          type: string
+          description: Persist only after every change in this page is applied transactionally.
+        hasMore:
+          type: boolean
+    BootstrapPage:
+      type: object
+      additionalProperties: false
+      required: [items, watermarkCursor, nextPageToken, hasMore]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Expense'
+        watermarkCursor:
+          type: string
+        nextPageToken:
+          type: [string, 'null']
+        hasMore:
+          type: boolean
+    ValidationIssue:
+      type: object
+      additionalProperties: false
+      required: [path, code, message]
+      properties:
+        path:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, requestId]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            requestId:
+              type: string
+            details:
+              type: array
+              items:
+                $ref: '#/components/schemas/ValidationIssue'
+    LivenessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
       properties:
         status:
           type: string
           const: ok
+        checks:
+          type: object
+          additionalProperties: false
+          required: [process]
+          properties:
+            process:
+              type: string
+              const: up
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties: false
+          required: [database]
+          properties:
+            database:
+              type: string
+              enum: [up, down]
+    CompositeHealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties: false
+          required: [process, database]
+          properties:
+            process:
+              type: string
+              const: up
+            database:
+              type: string
+              enum: [up, down]
