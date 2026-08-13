@@ -9,6 +9,8 @@ final class AppConfig {
 
   final Uri apiBaseUri;
 
+  String get environmentLabel => kReleaseMode ? 'Production' : 'Development';
+
   static AppConfig fromEnvironment() {
     final value = _compiledApiBaseUrl.isEmpty
         ? (kReleaseMode ? '' : 'http://10.0.2.2:3000')
