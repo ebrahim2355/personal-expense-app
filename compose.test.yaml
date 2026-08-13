@@ -1,0 +1,19 @@
+name: household-expenses-e2e
+
+services:
+  postgres-test:
+    image: postgres:18.4-alpine
+    environment:
+      POSTGRES_DB: expenses_e2e_test
+      POSTGRES_USER: expenses_test
+      POSTGRES_PASSWORD: expenses_test
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U expenses_test -d expenses_e2e_test"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+      start_period: 2s
