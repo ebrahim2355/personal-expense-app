@@ -13,6 +13,7 @@ import {
   mutationEnvelopeSchema,
   refreshSchema,
 } from '../domain/validation.js';
+import type { AppLogger } from '../infrastructure/logger.js';
 import type { DatabaseClient } from '../infrastructure/prisma.js';
 import {
   asyncHandler,
@@ -26,6 +27,7 @@ interface RouteDependencies {
   prisma: DatabaseClient;
   authService: AuthService;
   syncService: SyncService;
+  logger: AppLogger;
 }
 
 function limiter(
@@ -145,9 +147,19 @@ export function createRouter(dependencies: RouteDependencies): Router {
     authRequired,
     asyncHandler(async (request, response) => {
       const input = mutationEnvelopeSchema.parse(unknownBody(request));
+      const identity = authenticatedMember(response);
       const results = await dependencies.syncService.applyMutations(
-        authenticatedMember(response),
+        identity,
         input.mutations,
+      );
+      dependencies.logger.info(
+        {
+          requestId: response.locals.requestId as string,
+          memberKey: identity.memberKey,
+          mutationIds: input.mutations.map((mutation) => mutation.mutationId),
+          resultStatuses: results.map((result) => result.status),
+        },
+        'sync mutation batch processed',
       );
       response.status(200).json({ results });
     }),
@@ -158,10 +170,21 @@ export function createRouter(dependencies: RouteDependencies): Router {
     authRequired,
     asyncHandler(async (request, response) => {
       const query = changesQuerySchema.parse(request.query);
+      const identity = authenticatedMember(response);
       const page = await dependencies.syncService.getChanges(
-        authenticatedMember(response),
+        identity,
         query.cursor,
         query.limit,
+      );
+      dependencies.logger.debug(
+        {
+          requestId: response.locals.requestId as string,
+          memberKey: identity.memberKey,
+          cursorSupplied: query.cursor !== undefined,
+          changeCount: page.changes.length,
+          hasMore: page.hasMore,
+        },
+        'sync change page served',
       );
       response.status(200).json(page);
     }),
@@ -172,10 +195,21 @@ export function createRouter(dependencies: RouteDependencies): Router {
     authRequired,
     asyncHandler(async (request, response) => {
       const query = bootstrapQuerySchema.parse(request.query);
+      const identity = authenticatedMember(response);
       const page = await dependencies.syncService.bootstrap(
-        authenticatedMember(response),
+        identity,
         query.pageToken,
         query.limit,
+      );
+      dependencies.logger.debug(
+        {
+          requestId: response.locals.requestId as string,
+          memberKey: identity.memberKey,
+          pageTokenSupplied: query.pageToken !== undefined,
+          itemCount: page.items.length,
+          hasMore: page.hasMore,
+        },
+        'sync bootstrap page served',
       );
       response.status(200).json(page);
     }),

@@ -1,4 +1,8 @@
+import 'dart:convert';
+
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
 
 final class TransportRequest {
   const TransportRequest({
@@ -81,20 +85,55 @@ final class DioHttpTransport implements HttpTransport {
 
   @override
   Future<TransportResponse> send(TransportRequest request) async {
+    final requestId =
+        request.headers.entries
+            .where((entry) => entry.key.toLowerCase() == 'x-request-id')
+            .map((entry) => entry.value.toString())
+            .firstOrNull ??
+        const Uuid().v4();
+    final stopwatch = Stopwatch()..start();
     try {
       final response = await _dio.request<Object?>(
         request.path,
         data: request.data,
         queryParameters: request.queryParameters,
-        options: Options(method: request.method, headers: request.headers),
+        options: Options(
+          method: request.method,
+          headers: <String, Object?>{
+            ...request.headers,
+            'X-Request-ID': requestId,
+          },
+        ),
       );
+      _debugHttpLog(<String, Object?>{
+        'event': 'sync_http',
+        'requestId': requestId,
+        'method': request.method,
+        'path': request.path,
+        'statusCode': response.statusCode ?? 0,
+        'durationMs': stopwatch.elapsedMilliseconds,
+      });
       return TransportResponse(
         statusCode: response.statusCode ?? 0,
         data: response.data,
         headers: response.headers.map,
       );
     } on DioException catch (error) {
+      _debugHttpLog(<String, Object?>{
+        'event': 'sync_http',
+        'requestId': requestId,
+        'method': request.method,
+        'path': request.path,
+        'result': 'network_error',
+        'durationMs': stopwatch.elapsedMilliseconds,
+      });
       throw NetworkException('The API request did not complete.', error);
     }
+  }
+}
+
+void _debugHttpLog(Map<String, Object?> fields) {
+  if (kDebugMode) {
+    debugPrint(jsonEncode(fields));
   }
 }

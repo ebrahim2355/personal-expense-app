@@ -1,4 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 
 import '../../application/session_controller.dart';
 import '../../data/security/token_store.dart';
@@ -195,9 +198,19 @@ final class DioExpenseSyncApi implements ExpenseSyncApi {
     if (results is! List) {
       throw const FormatException('results must be an array.');
     }
-    return results
+    final parsed = results
         .map((item) => MutationResultDto.fromJson(responseObject(item)))
         .toList(growable: false);
+    _debugSyncLog('sync_push', <String, Object?>{
+      'requestId': response.firstHeader('x-request-id'),
+      'mutationIds': mutations
+          .map((mutation) => mutation.mutationId)
+          .toList(growable: false),
+      'statuses': parsed
+          .map((result) => result.status.name.toUpperCase())
+          .toList(growable: false),
+    });
+    return parsed;
   }
 
   @override
@@ -212,7 +225,14 @@ final class DioExpenseSyncApi implements ExpenseSyncApi {
         queryParameters: <String, Object?>{'cursor': ?cursor, 'limit': limit},
       ),
     );
-    return ChangePageDto.fromJson(_successfulObject(response));
+    final page = ChangePageDto.fromJson(_successfulObject(response));
+    _debugSyncLog('sync_pull', <String, Object?>{
+      'requestId': response.firstHeader('x-request-id'),
+      'changeCount': page.changes.length,
+      'nextCursor': _cursorPreview(page.nextCursor),
+      'hasMore': page.hasMore,
+    });
+    return page;
   }
 
   @override
@@ -230,7 +250,14 @@ final class DioExpenseSyncApi implements ExpenseSyncApi {
         },
       ),
     );
-    return BootstrapPageDto.fromJson(_successfulObject(response));
+    final page = BootstrapPageDto.fromJson(_successfulObject(response));
+    _debugSyncLog('sync_bootstrap', <String, Object?>{
+      'requestId': response.firstHeader('x-request-id'),
+      'itemCount': page.items.length,
+      'watermarkCursor': _cursorPreview(page.watermarkCursor),
+      'hasMore': page.hasMore,
+    });
+    return page;
   }
 
   Map<String, Object?> _successfulObject(TransportResponse response) {
@@ -238,6 +265,19 @@ final class DioExpenseSyncApi implements ExpenseSyncApi {
       throw apiExceptionFrom(response);
     }
     return responseObject(response.data);
+  }
+}
+
+String _cursorPreview(String value) {
+  const visibleLength = 16;
+  return value.length <= visibleLength
+      ? value
+      : '${value.substring(0, visibleLength)}…';
+}
+
+void _debugSyncLog(String event, Map<String, Object?> fields) {
+  if (kDebugMode) {
+    debugPrint(jsonEncode(<String, Object?>{'event': event, ...fields}));
   }
 }
 
