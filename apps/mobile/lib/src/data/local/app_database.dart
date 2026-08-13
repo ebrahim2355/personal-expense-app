@@ -47,6 +47,7 @@ class SyncMetadata extends Table {
   TextColumn get bootstrapPageToken => text().nullable()();
   TextColumn get bootstrapWatermark => text().nullable()();
   DateTimeColumn get updatedAt => dateTime()();
+  DateTimeColumn get lastSuccessfulSyncAt => dateTime().nullable()();
 
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{singletonId};
@@ -65,7 +66,7 @@ final class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -79,8 +80,14 @@ final class AppDatabase extends _$AppDatabase {
       );
     },
     onUpgrade: (Migrator migrator, int from, int to) async {
+      if (from < 2) {
+        await migrator.addColumn(
+          syncMetadata,
+          syncMetadata.lastSuccessfulSyncAt,
+        );
+      }
       // Every future schema version must add an explicit, tested migration.
-      if (from != to) {
+      if (to > 2) {
         throw StateError('Missing database migration from $from to $to.');
       }
     },
@@ -130,5 +137,19 @@ final class AppDatabase extends _$AppDatabase {
     return (select(
       syncMetadata,
     )..where((item) => item.singletonId.equals(1))).getSingle();
+  }
+
+  Stream<SyncMetadataRow> watchSyncMetadata() {
+    return (select(
+      syncMetadata,
+    )..where((row) => row.singletonId.equals(1))).watchSingle();
+  }
+
+  Stream<int> watchUnresolvedMutationCount() {
+    final count = outboxMutations.localSequence.count();
+    return (selectOnly(outboxMutations)
+          ..addColumns(<Expression<Object>>[count]))
+        .watchSingle()
+        .map((row) => row.read(count) ?? 0);
   }
 }

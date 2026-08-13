@@ -1506,6 +1506,17 @@ class $SyncMetadataTable extends SyncMetadata
     type: DriftSqlType.dateTime,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _lastSuccessfulSyncAtMeta =
+      const VerificationMeta('lastSuccessfulSyncAt');
+  @override
+  late final GeneratedColumn<DateTime> lastSuccessfulSyncAt =
+      GeneratedColumn<DateTime>(
+        'last_successful_sync_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
   @override
   List<GeneratedColumn> get $columns => [
     singletonId,
@@ -1516,6 +1527,7 @@ class $SyncMetadataTable extends SyncMetadata
     bootstrapPageToken,
     bootstrapWatermark,
     updatedAt,
+    lastSuccessfulSyncAt,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -1591,6 +1603,15 @@ class $SyncMetadataTable extends SyncMetadata
     } else if (isInserting) {
       context.missing(_updatedAtMeta);
     }
+    if (data.containsKey('last_successful_sync_at')) {
+      context.handle(
+        _lastSuccessfulSyncAtMeta,
+        lastSuccessfulSyncAt.isAcceptableOrUnknown(
+          data['last_successful_sync_at']!,
+          _lastSuccessfulSyncAtMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -1632,6 +1653,10 @@ class $SyncMetadataTable extends SyncMetadata
         DriftSqlType.dateTime,
         data['${effectivePrefix}updated_at'],
       )!,
+      lastSuccessfulSyncAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_successful_sync_at'],
+      ),
     );
   }
 
@@ -1650,6 +1675,7 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
   final String? bootstrapPageToken;
   final String? bootstrapWatermark;
   final DateTime updatedAt;
+  final DateTime? lastSuccessfulSyncAt;
   const SyncMetadataRow({
     required this.singletonId,
     this.householdId,
@@ -1659,6 +1685,7 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     this.bootstrapPageToken,
     this.bootstrapWatermark,
     required this.updatedAt,
+    this.lastSuccessfulSyncAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1683,6 +1710,9 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
       map['bootstrap_watermark'] = Variable<String>(bootstrapWatermark);
     }
     map['updated_at'] = Variable<DateTime>(updatedAt);
+    if (!nullToAbsent || lastSuccessfulSyncAt != null) {
+      map['last_successful_sync_at'] = Variable<DateTime>(lastSuccessfulSyncAt);
+    }
     return map;
   }
 
@@ -1708,6 +1738,9 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
           ? const Value.absent()
           : Value(bootstrapWatermark),
       updatedAt: Value(updatedAt),
+      lastSuccessfulSyncAt: lastSuccessfulSyncAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastSuccessfulSyncAt),
     );
   }
 
@@ -1729,6 +1762,9 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
         json['bootstrapWatermark'],
       ),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+      lastSuccessfulSyncAt: serializer.fromJson<DateTime?>(
+        json['lastSuccessfulSyncAt'],
+      ),
     );
   }
   @override
@@ -1743,6 +1779,9 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
       'bootstrapPageToken': serializer.toJson<String?>(bootstrapPageToken),
       'bootstrapWatermark': serializer.toJson<String?>(bootstrapWatermark),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
+      'lastSuccessfulSyncAt': serializer.toJson<DateTime?>(
+        lastSuccessfulSyncAt,
+      ),
     };
   }
 
@@ -1755,6 +1794,7 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     Value<String?> bootstrapPageToken = const Value.absent(),
     Value<String?> bootstrapWatermark = const Value.absent(),
     DateTime? updatedAt,
+    Value<DateTime?> lastSuccessfulSyncAt = const Value.absent(),
   }) => SyncMetadataRow(
     singletonId: singletonId ?? this.singletonId,
     householdId: householdId.present ? householdId.value : this.householdId,
@@ -1768,6 +1808,9 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
         ? bootstrapWatermark.value
         : this.bootstrapWatermark,
     updatedAt: updatedAt ?? this.updatedAt,
+    lastSuccessfulSyncAt: lastSuccessfulSyncAt.present
+        ? lastSuccessfulSyncAt.value
+        : this.lastSuccessfulSyncAt,
   );
   SyncMetadataRow copyWithCompanion(SyncMetadataCompanion data) {
     return SyncMetadataRow(
@@ -1789,6 +1832,9 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
           ? data.bootstrapWatermark.value
           : this.bootstrapWatermark,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      lastSuccessfulSyncAt: data.lastSuccessfulSyncAt.present
+          ? data.lastSuccessfulSyncAt.value
+          : this.lastSuccessfulSyncAt,
     );
   }
 
@@ -1802,7 +1848,8 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
           ..write('lastCursor: $lastCursor, ')
           ..write('bootstrapPageToken: $bootstrapPageToken, ')
           ..write('bootstrapWatermark: $bootstrapWatermark, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('lastSuccessfulSyncAt: $lastSuccessfulSyncAt')
           ..write(')'))
         .toString();
   }
@@ -1817,6 +1864,7 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     bootstrapPageToken,
     bootstrapWatermark,
     updatedAt,
+    lastSuccessfulSyncAt,
   );
   @override
   bool operator ==(Object other) =>
@@ -1829,7 +1877,8 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
           other.lastCursor == this.lastCursor &&
           other.bootstrapPageToken == this.bootstrapPageToken &&
           other.bootstrapWatermark == this.bootstrapWatermark &&
-          other.updatedAt == this.updatedAt);
+          other.updatedAt == this.updatedAt &&
+          other.lastSuccessfulSyncAt == this.lastSuccessfulSyncAt);
 }
 
 class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
@@ -1841,6 +1890,7 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
   final Value<String?> bootstrapPageToken;
   final Value<String?> bootstrapWatermark;
   final Value<DateTime> updatedAt;
+  final Value<DateTime?> lastSuccessfulSyncAt;
   const SyncMetadataCompanion({
     this.singletonId = const Value.absent(),
     this.householdId = const Value.absent(),
@@ -1850,6 +1900,7 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     this.bootstrapPageToken = const Value.absent(),
     this.bootstrapWatermark = const Value.absent(),
     this.updatedAt = const Value.absent(),
+    this.lastSuccessfulSyncAt = const Value.absent(),
   });
   SyncMetadataCompanion.insert({
     this.singletonId = const Value.absent(),
@@ -1860,6 +1911,7 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     this.bootstrapPageToken = const Value.absent(),
     this.bootstrapWatermark = const Value.absent(),
     required DateTime updatedAt,
+    this.lastSuccessfulSyncAt = const Value.absent(),
   }) : updatedAt = Value(updatedAt);
   static Insertable<SyncMetadataRow> custom({
     Expression<int>? singletonId,
@@ -1870,6 +1922,7 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     Expression<String>? bootstrapPageToken,
     Expression<String>? bootstrapWatermark,
     Expression<DateTime>? updatedAt,
+    Expression<DateTime>? lastSuccessfulSyncAt,
   }) {
     return RawValuesInsertable({
       if (singletonId != null) 'singleton_id': singletonId,
@@ -1881,6 +1934,8 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
         'bootstrap_page_token': bootstrapPageToken,
       if (bootstrapWatermark != null) 'bootstrap_watermark': bootstrapWatermark,
       if (updatedAt != null) 'updated_at': updatedAt,
+      if (lastSuccessfulSyncAt != null)
+        'last_successful_sync_at': lastSuccessfulSyncAt,
     });
   }
 
@@ -1893,6 +1948,7 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     Value<String?>? bootstrapPageToken,
     Value<String?>? bootstrapWatermark,
     Value<DateTime>? updatedAt,
+    Value<DateTime?>? lastSuccessfulSyncAt,
   }) {
     return SyncMetadataCompanion(
       singletonId: singletonId ?? this.singletonId,
@@ -1903,6 +1959,7 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
       bootstrapPageToken: bootstrapPageToken ?? this.bootstrapPageToken,
       bootstrapWatermark: bootstrapWatermark ?? this.bootstrapWatermark,
       updatedAt: updatedAt ?? this.updatedAt,
+      lastSuccessfulSyncAt: lastSuccessfulSyncAt ?? this.lastSuccessfulSyncAt,
     );
   }
 
@@ -1933,6 +1990,11 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     if (updatedAt.present) {
       map['updated_at'] = Variable<DateTime>(updatedAt.value);
     }
+    if (lastSuccessfulSyncAt.present) {
+      map['last_successful_sync_at'] = Variable<DateTime>(
+        lastSuccessfulSyncAt.value,
+      );
+    }
     return map;
   }
 
@@ -1946,7 +2008,8 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
           ..write('lastCursor: $lastCursor, ')
           ..write('bootstrapPageToken: $bootstrapPageToken, ')
           ..write('bootstrapWatermark: $bootstrapWatermark, ')
-          ..write('updatedAt: $updatedAt')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('lastSuccessfulSyncAt: $lastSuccessfulSyncAt')
           ..write(')'))
         .toString();
   }
@@ -2650,6 +2713,7 @@ typedef $$SyncMetadataTableCreateCompanionBuilder =
       Value<String?> bootstrapPageToken,
       Value<String?> bootstrapWatermark,
       required DateTime updatedAt,
+      Value<DateTime?> lastSuccessfulSyncAt,
     });
 typedef $$SyncMetadataTableUpdateCompanionBuilder =
     SyncMetadataCompanion Function({
@@ -2661,6 +2725,7 @@ typedef $$SyncMetadataTableUpdateCompanionBuilder =
       Value<String?> bootstrapPageToken,
       Value<String?> bootstrapWatermark,
       Value<DateTime> updatedAt,
+      Value<DateTime?> lastSuccessfulSyncAt,
     });
 
 class $$SyncMetadataTableFilterComposer
@@ -2709,6 +2774,11 @@ class $$SyncMetadataTableFilterComposer
 
   ColumnFilters<DateTime> get updatedAt => $composableBuilder(
     column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastSuccessfulSyncAt => $composableBuilder(
+    column: $table.lastSuccessfulSyncAt,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -2761,6 +2831,11 @@ class $$SyncMetadataTableOrderingComposer
     column: $table.updatedAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<DateTime> get lastSuccessfulSyncAt => $composableBuilder(
+    column: $table.lastSuccessfulSyncAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$SyncMetadataTableAnnotationComposer
@@ -2805,6 +2880,11 @@ class $$SyncMetadataTableAnnotationComposer
 
   GeneratedColumn<DateTime> get updatedAt =>
       $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get lastSuccessfulSyncAt => $composableBuilder(
+    column: $table.lastSuccessfulSyncAt,
+    builder: (column) => column,
+  );
 }
 
 class $$SyncMetadataTableTableManager
@@ -2846,6 +2926,7 @@ class $$SyncMetadataTableTableManager
                 Value<String?> bootstrapPageToken = const Value.absent(),
                 Value<String?> bootstrapWatermark = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
+                Value<DateTime?> lastSuccessfulSyncAt = const Value.absent(),
               }) => SyncMetadataCompanion(
                 singletonId: singletonId,
                 householdId: householdId,
@@ -2855,6 +2936,7 @@ class $$SyncMetadataTableTableManager
                 bootstrapPageToken: bootstrapPageToken,
                 bootstrapWatermark: bootstrapWatermark,
                 updatedAt: updatedAt,
+                lastSuccessfulSyncAt: lastSuccessfulSyncAt,
               ),
           createCompanionCallback:
               ({
@@ -2866,6 +2948,7 @@ class $$SyncMetadataTableTableManager
                 Value<String?> bootstrapPageToken = const Value.absent(),
                 Value<String?> bootstrapWatermark = const Value.absent(),
                 required DateTime updatedAt,
+                Value<DateTime?> lastSuccessfulSyncAt = const Value.absent(),
               }) => SyncMetadataCompanion.insert(
                 singletonId: singletonId,
                 householdId: householdId,
@@ -2875,6 +2958,7 @@ class $$SyncMetadataTableTableManager
                 bootstrapPageToken: bootstrapPageToken,
                 bootstrapWatermark: bootstrapWatermark,
                 updatedAt: updatedAt,
+                lastSuccessfulSyncAt: lastSuccessfulSyncAt,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

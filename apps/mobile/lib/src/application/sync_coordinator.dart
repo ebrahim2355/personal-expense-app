@@ -91,6 +91,15 @@ final class SyncCoordinator {
         await _pushAllReadyMutations();
         await _bootstrapIfNeeded();
         await _pullAllChanges();
+        final completedAt = _clock();
+        await (_database.update(
+          _database.syncMetadata,
+        )..where((row) => row.singletonId.equals(1))).write(
+          SyncMetadataCompanion(
+            lastSuccessfulSyncAt: Value<DateTime>(completedAt),
+            updatedAt: Value<DateTime>(completedAt),
+          ),
+        );
         completer.complete(const SyncReport(SyncOutcome.completed));
       } on AuthenticationExpiredException catch (error) {
         completer.complete(
