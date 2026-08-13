@@ -149,6 +149,19 @@ Integration tests erase all rows in their target database. Use a dedicated test
 database only. One optional Docker workflow is shown because the sync suite must
 exercise actual PostgreSQL behavior:
 
+The recommended reproducible workflow starts its own Compose project, migrates
+and provisions it with generated test-only credentials, runs the real API and
+ten two-client Flutter scenarios, performs guarded cleanup, and stops the stack:
+
+```powershell
+npm.cmd run test:real-stack
+```
+
+Use `npm run test:real-stack` on POSIX. See
+[docs/REAL_STACK_TESTING.md](docs/REAL_STACK_TESTING.md) for the exact automated
+scenario matrix, `--keep-postgres` API-test workflow, interactive local API
+setup, Android networking, cleanup guard, and two-device manual checklist.
+
 ```powershell
 docker run --name expenses-api-postgres-test `
   -e POSTGRES_USER=expenses_test `
@@ -220,6 +233,11 @@ flutter run -d <ANDROID_DEVICE_ID> `
   --dart-define=API_BASE_URL=http://192.168.1.20:3000
 flutter build apk --release `
   --dart-define=API_BASE_URL=https://your-api.example
+
+# USB-connected physical device: forward this device's loopback to the PC API
+adb -s <ANDROID_DEVICE_ID> reverse tcp:3000 tcp:3000
+flutter run -d <ANDROID_DEVICE_ID> `
+  --dart-define=API_BASE_URL=http://127.0.0.1:3000
 ```
 
 Release configuration requires HTTPS. The URL is not a secret; tokens and PINs
@@ -284,4 +302,5 @@ Further guidance:
 - [Product specification](docs/PRODUCT_SPEC.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
+- [Local real-stack and two-client testing](docs/REAL_STACK_TESTING.md)
 - [Repository rules](AGENTS.md)

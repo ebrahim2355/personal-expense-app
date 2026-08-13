@@ -182,19 +182,41 @@ login errors, dashboard/empty states, 320-pixel enlarged-text layout, offline
 add, duplicate submission, edit, deletion confirmation, sync state, and conflict
 feedback.
 
-### Milestone 7 — staging multi-device convergence (next)
+### Milestone 7 — local real-stack multi-client convergence (complete)
 
-The sync coordinator is now connected to pull/manual refresh, pending/error
-indicators, conflict messages, and authentication screens. Next, exercise the
-dependency-ready outbox ordering, immutable retry semantics,
-`originMutationId` acknowledgement, server-wins conflict transaction, permanent
-rejection state, backoff, and all foreground/background triggers against two
-real Android installations and the staging API.
+Delivered:
 
-Exit criterion: two devices converge across offline create/update/delete,
-duplicate delivery, lost responses, pagination, conflicts, and tombstones.
-Documentation and UI explicitly state that Android background timing is not
-guaranteed.
+- disposable PostgreSQL 18 Compose topology with committed Prisma migrations;
+- a guarded, test-database-only reset command and random, non-logged bootstrap
+  credentials;
+- a cross-platform runner that starts the real API, waits on database-backed
+  readiness, runs the mobile test, cleans rows, and shuts down deterministically;
+- two independent file-backed Drift clients using production Dio, authentication,
+  repository, outbox, and sync-coordinator implementations;
+- real HTTP/PostgreSQL coverage for offline cross-client creates, concurrent
+  creates, lost-response idempotency, edit propagation, server-wins conflicts
+  and notices, tombstones/totals, interrupted cursor pagination, refresh-once and
+  revoked credentials, process-restart durability, and Dhaka/UTC boundaries;
+- safe request/mutation/cursor diagnostics plus a debug-only Settings view of
+  cursor preview, pending count, last result, and last successful sync;
+- emulator, USB `adb reverse`, LAN, and two-device manual verification guidance.
+
+Checks:
+
+```powershell
+npm.cmd run test:real-stack -- --keep-postgres
+$env:NODE_ENV = 'test'
+$env:DATABASE_URL = 'postgresql://expenses_test:expenses_test@127.0.0.1:55432/expenses_e2e_test?schema=public'
+$env:TEST_DATABASE_URL = $env:DATABASE_URL
+npm.cmd test
+npm.cmd run stack:test:down
+```
+
+Exit criterion met locally: ten mobile real-stack scenarios and all 28 API tests
+pass against PostgreSQL. A two-installation hardware smoke pass remains part of
+release validation, using the deterministic checklist in
+`docs/REAL_STACK_TESTING.md`. Android background timing remains explicitly
+best-effort and is not used as a deterministic test completion signal.
 
 ### Milestone 8 — Railway staging, CI, and release hardening
 

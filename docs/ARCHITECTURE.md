@@ -318,3 +318,13 @@ concurrent offline creates, update/delete propagation, stale-version conflict,
 cursor/bootstrap pagination, tombstones, and household isolation. Integration
 tests require `TEST_DATABASE_URL` for an actual disposable PostgreSQL database;
 SQLite is never substituted.
+
+The real-stack suite adds two independent file-backed Drift databases over the
+production Dio/auth/sync path, the compiled Express API, and PostgreSQL 18. It
+injects failures at transport boundaries to prove lost-response idempotency and
+interrupted cursor-page recovery without timing sleeps. Test cleanup is accepted
+only for an explicitly matched `_test`/`-test` database URL. Request IDs connect
+mobile and API logs; logs contain mutation IDs, statuses, cursor/page counts, and
+timings, but omit credentials, Authorization headers, database URLs, and expense
+payloads. Debug Settings exposes only cursor preview, pending count, last sync
+result, and last success time.
