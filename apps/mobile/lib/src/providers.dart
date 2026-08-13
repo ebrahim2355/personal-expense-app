@@ -12,6 +12,7 @@ import 'data/repositories/auth_repository.dart';
 import 'data/repositories/expense_repository.dart';
 import 'data/security/token_store.dart';
 import 'domain/expense.dart';
+import 'domain/session.dart';
 
 final appConfigProvider = Provider<AppConfig>((ref) {
   return AppConfig.fromEnvironment();
@@ -59,7 +60,7 @@ final expenseRepositoryProvider = Provider<ExpenseRepository>((ref) {
   return repository;
 });
 
-final authRepositoryProvider = Provider<AuthRepository>((ref) {
+final authRepositoryProvider = Provider<MemberAuthRepository>((ref) {
   return AuthRepository(
     api: ref.watch(authenticationApiProvider),
     tokenStore: ref.watch(tokenStoreProvider),
@@ -95,7 +96,13 @@ final syncTriggerControllerProvider = Provider<SyncTriggerController>((ref) {
 });
 
 final appStartupProvider = FutureProvider<void>((ref) async {
-  await ref.watch(sessionControllerProvider).initialize();
+  final session = ref.watch(sessionControllerProvider);
+  final auth = ref.watch(authRepositoryProvider);
+  await session.initialize();
+  final identity = await auth.restoreStoredIdentity();
+  if (session.current.status == SessionStatus.signedIn && identity == null) {
+    await auth.signOutLocally();
+  }
   await ref.watch(syncTriggerControllerProvider).start();
 });
 

@@ -7,7 +7,17 @@ import '../local/app_database.dart';
 import '../remote/api_client.dart';
 import '../security/token_store.dart';
 
-final class AuthRepository {
+abstract interface class MemberAuthRepository {
+  Future<MemberIdentity> login(HouseholdMember member, String pin);
+
+  Future<MemberIdentity?> restoreStoredIdentity();
+
+  Future<void> logout();
+
+  Future<void> signOutLocally();
+}
+
+final class AuthRepository implements MemberAuthRepository {
   const AuthRepository({
     required this._api,
     required this._tokenStore,
@@ -20,6 +30,7 @@ final class AuthRepository {
   final SessionController _sessionController;
   final AppDatabase _database;
 
+  @override
   Future<MemberIdentity> login(HouseholdMember member, String pin) async {
     if (!RegExp(r'^\d{6,12}$').hasMatch(pin)) {
       throw ArgumentError.value(pin, 'pin', 'PIN must contain 6 to 12 digits.');
@@ -37,10 +48,45 @@ final class AuthRepository {
         updatedAt: Value<DateTime>(DateTime.now().toUtc()),
       ),
     );
-    _sessionController.markSignedIn();
+    _sessionController.markSignedIn(identity);
     return identity;
   }
 
+  @override
+  Future<MemberIdentity?> restoreStoredIdentity() async {
+    final metadata = await _database.readSyncMetadata();
+    final memberId = metadata.memberId;
+    final householdId = metadata.householdId;
+    final memberKey = metadata.memberKey;
+    if (memberId == null || householdId == null || memberKey == null) {
+      return null;
+    }
+    final member = HouseholdMemberWire.parse(memberKey);
+    final identity = MemberIdentity(
+      id: memberId,
+      householdId: householdId,
+      member: member,
+      displayName: member.displayName,
+    );
+    _sessionController.restoreMember(identity);
+    return identity;
+  }
+
+  @override
+  Future<void> logout() async {
+    final tokens = await _tokenStore.read();
+    if (tokens != null) {
+      try {
+        await _api.logout(tokens);
+      } on Object {
+        // Local logout must remain available while offline. Access tokens are
+        // short lived; the server revocation is best effort in this case.
+      }
+    }
+    await signOutLocally();
+  }
+
+  @override
   Future<void> signOutLocally() async {
     await _tokenStore.clear();
     _sessionController.markSignedOut();

@@ -243,6 +243,8 @@ final class DioExpenseSyncApi implements ExpenseSyncApi {
 
 abstract interface class AuthenticationApi {
   Future<AuthResponseDto> login(HouseholdMember member, String pin);
+
+  Future<void> logout(SessionTokens tokens);
 }
 
 final class DioAuthenticationApi implements AuthenticationApi {
@@ -263,5 +265,22 @@ final class DioAuthenticationApi implements AuthenticationApi {
       throw apiExceptionFrom(response);
     }
     return AuthResponseDto.fromJson(responseObject(response.data));
+  }
+
+  @override
+  Future<void> logout(SessionTokens tokens) async {
+    final response = await _transport.send(
+      TransportRequest(
+        method: 'POST',
+        path: '/v1/auth/logout',
+        data: <String, Object?>{'refreshToken': tokens.refreshToken},
+      ).withAuthorization(tokens.accessToken),
+    );
+    if (response.statusCode == 204 || response.statusCode == 401) {
+      return;
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw apiExceptionFrom(response);
+    }
   }
 }

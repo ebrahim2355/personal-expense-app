@@ -22,15 +22,23 @@ final class SessionController {
     );
   }
 
-  void markSignedIn() => _setStatus(SessionStatus.signedIn);
+  void markSignedIn([MemberIdentity? member]) {
+    _setStatus(SessionStatus.signedIn, member: member ?? _current.member);
+  }
 
-  void markSignedOut() => _setStatus(SessionStatus.signedOut);
+  void markSignedOut() {
+    _setStatus(SessionStatus.signedOut);
+  }
 
-  void _setStatus(SessionStatus status) {
-    if (_current.status == status) {
+  void restoreMember(MemberIdentity member) {
+    _setStatus(_current.status, member: member);
+  }
+
+  void _setStatus(SessionStatus status, {MemberIdentity? member}) {
+    if (_current.status == status && _current.member == member) {
       return;
     }
-    _current = SessionSnapshot(status);
+    _current = SessionSnapshot(status, member: member);
     _changes.add(_current);
   }
 

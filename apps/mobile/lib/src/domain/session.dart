@@ -31,7 +31,8 @@ final class SessionTokens {
 enum SessionStatus { unknown, signedIn, signedOut }
 
 final class SessionSnapshot {
-  const SessionSnapshot(this.status);
+  const SessionSnapshot(this.status, {this.member});
 
   final SessionStatus status;
+  final MemberIdentity? member;
 }
