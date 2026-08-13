@@ -6,3 +6,130 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum MemberKey {
+  SUMON
+  EBRAHIM
+}
+
+enum ExpenseCategory {
+  GROCERIES
+  UTILITIES
+  TRANSPORT
+  HOUSEHOLD
+  MEDICINE
+  OTHER
+}
+
+enum MutationOperation {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+enum ChangeOperation {
+  CREATED
+  UPDATED
+  DELETED
+}
+
+model Household {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug               String              @unique @db.VarChar(64)
+  name               String              @db.VarChar(100)
+  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+  members            Member[]
+  expenses           Expense[]
+  processedMutations ProcessedMutation[]
+  expenseChanges     ExpenseChange[]
+}
+
+model Member {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId        String              @db.Uuid
+  key                MemberKey
+  displayName        String              @db.VarChar(50)
+  pinHash            String              @db.Text
+  createdAt          DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime            @default(now()) @db.Timestamptz(3)
+  disabledAt         DateTime?           @db.Timestamptz(3)
+  household          Household           @relation(fields: [householdId], references: [id], onDelete: Restrict)
+  refreshTokens      RefreshToken[]
+  paidExpenses       Expense[]
+  processedMutations ProcessedMutation[]
+
+  @@unique([householdId, key])
+  @@unique([householdId, id])
+  @@index([householdId])
+}
+
+model RefreshToken {
+  id                String         @id @db.Uuid
+  memberId          String         @db.Uuid
+  familyId          String         @db.Uuid
+  tokenHash         String         @unique @db.Char(64)
+  createdAt         DateTime       @default(now()) @db.Timestamptz(3)
+  expiresAt         DateTime       @db.Timestamptz(3)
+  lastUsedAt        DateTime?      @db.Timestamptz(3)
+  revokedAt         DateTime?      @db.Timestamptz(3)
+  replacedByTokenId String?        @unique @db.Uuid
+  member            Member         @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  replacedBy        RefreshToken?  @relation("RefreshRotation", fields: [replacedByTokenId], references: [id], onDelete: SetNull)
+  replaces          RefreshToken?  @relation("RefreshRotation")
+
+  @@index([memberId])
+  @@index([familyId])
+  @@index([expiresAt])
+}
+
+model Expense {
+  id                 String           @id @db.Uuid
+  householdId        String           @db.Uuid
+  amountMinor        BigInt           @db.BigInt
+  category           ExpenseCategory
+  payerId            String           @db.Uuid
+  occurredAt         DateTime         @db.Timestamptz(3)
+  note               String?          @db.VarChar(500)
+  version            Int              @default(1)
+  createdAt          DateTime         @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime         @default(now()) @db.Timestamptz(3)
+  deletedAt          DateTime?        @db.Timestamptz(3)
+  lastChangeSequence BigInt           @default(0) @db.BigInt
+  household          Household        @relation(fields: [householdId], references: [id], onDelete: Restrict)
+  payer              Member           @relation(fields: [householdId, payerId], references: [householdId, id], onDelete: Restrict)
+
+  @@index([householdId, occurredAt])
+  @@index([householdId, lastChangeSequence])
+  @@index([householdId, payerId])
+}
+
+model ProcessedMutation {
+  mutationId  String            @id @db.Uuid
+  householdId String            @db.Uuid
+  memberId    String            @db.Uuid
+  entityId    String            @db.Uuid
+  operation   MutationOperation
+  requestHash String            @db.Char(64)
+  result      Json              @db.JsonB
+  createdAt   DateTime          @default(now()) @db.Timestamptz(3)
+  household   Household         @relation(fields: [householdId], references: [id], onDelete: Restrict)
+  member      Member            @relation(fields: [householdId, memberId], references: [householdId, id], onDelete: Restrict)
+
+  @@index([householdId, createdAt])
+  @@index([householdId, entityId])
+}
+
+model ExpenseChange {
+  sequence         BigInt          @id @default(autoincrement()) @db.BigInt
+  householdId      String          @db.Uuid
+  entityId         String          @db.Uuid
+  entityVersion    Int
+  operation        ChangeOperation
+  originMutationId String          @unique @db.Uuid
+  snapshot         Json            @db.JsonB
+  changedAt        DateTime        @default(now()) @db.Timestamptz(3)
+  household        Household       @relation(fields: [householdId], references: [id], onDelete: Restrict)
+
+  @@index([householdId, sequence])
+  @@index([householdId, entityId, entityVersion])
+}
