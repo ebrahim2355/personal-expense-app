@@ -1,0 +1,267 @@
+import 'dart:async';
+
+import '../../application/session_controller.dart';
+import '../../data/security/token_store.dart';
+import '../../domain/expense.dart';
+import '../../domain/session.dart';
+import 'api_models.dart';
+import 'http_transport.dart';
+
+Map<String, Object?> responseObject(Object? value) {
+  if (value is! Map) {
+    throw const FormatException('The API response must be a JSON object.');
+  }
+  return value.map((key, item) => MapEntry(key.toString(), item));
+}
+
+final class ApiException implements Exception {
+  const ApiException({
+    required this.statusCode,
+    required this.code,
+    required this.message,
+    this.retryAfter,
+  });
+
+  final int statusCode;
+  final String code;
+  final String message;
+  final Duration? retryAfter;
+
+  bool get isTransient => statusCode == 429 || statusCode >= 500;
+  bool get isAuthenticationFailure => statusCode == 401 || statusCode == 403;
+
+  @override
+  String toString() => 'ApiException($statusCode, $code): $message';
+}
+
+final class AuthenticationExpiredException implements Exception {
+  const AuthenticationExpiredException();
+
+  @override
+  String toString() => 'The stored session can no longer be refreshed.';
+}
+
+ApiException apiExceptionFrom(TransportResponse response) {
+  var code = 'HTTP_${response.statusCode}';
+  var message = 'The API request failed.';
+  final body = response.data;
+  if (body is Map) {
+    final error = body['error'];
+    if (error is Map) {
+      if (error['code'] is String) {
+        code = error['code'] as String;
+      }
+      if (error['message'] is String) {
+        message = error['message'] as String;
+      }
+    }
+  }
+  return ApiException(
+    statusCode: response.statusCode,
+    code: code,
+    message: message,
+    retryAfter: _parseRetryAfter(response.firstHeader('retry-after')),
+  );
+}
+
+Duration? _parseRetryAfter(String? value) {
+  if (value == null) {
+    return null;
+  }
+  final seconds = int.tryParse(value);
+  if (seconds != null && seconds >= 0) {
+    return Duration(seconds: seconds);
+  }
+  final date = DateTime.tryParse(value)?.toUtc();
+  if (date == null) {
+    return null;
+  }
+  final difference = date.difference(DateTime.now().toUtc());
+  return difference.isNegative ? Duration.zero : difference;
+}
+
+final class AuthenticatedApiClient {
+  AuthenticatedApiClient({
+    required this._transport,
+    required this._tokenStore,
+    required this._sessionController,
+  });
+
+  final HttpTransport _transport;
+  final TokenStore _tokenStore;
+  final SessionController _sessionController;
+  Future<SessionTokens>? _refreshInFlight;
+
+  Future<TransportResponse> send(TransportRequest request) async {
+    final currentTokens = await _tokenStore.read();
+    if (currentTokens == null) {
+      _sessionController.markSignedOut();
+      throw const AuthenticationExpiredException();
+    }
+
+    final first = await _transport.send(
+      request.withAuthorization(currentTokens.accessToken),
+    );
+    if (first.statusCode != 401) {
+      return first;
+    }
+
+    final refreshed = await _refreshOnce();
+    final retry = await _transport.send(
+      request.withAuthorization(refreshed.accessToken),
+    );
+    if (retry.statusCode == 401) {
+      await _expireSession();
+      throw const AuthenticationExpiredException();
+    }
+    return retry;
+  }
+
+  Future<SessionTokens> _refreshOnce() {
+    final active = _refreshInFlight;
+    if (active != null) {
+      return active;
+    }
+    final completer = Completer<SessionTokens>();
+    _refreshInFlight = completer.future;
+    () async {
+      try {
+        final current = await _tokenStore.read();
+        if (current == null) {
+          throw const AuthenticationExpiredException();
+        }
+        final response = await _transport.send(
+          TransportRequest(
+            method: 'POST',
+            path: '/v1/auth/refresh',
+            data: <String, Object?>{'refreshToken': current.refreshToken},
+          ),
+        );
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw const AuthenticationExpiredException();
+        }
+        final auth = AuthResponseDto.fromJson(responseObject(response.data));
+        await _tokenStore.write(auth.tokens);
+        _sessionController.markSignedIn();
+        completer.complete(auth.tokens);
+      } catch (error, stackTrace) {
+        await _expireSession();
+        completer.completeError(error, stackTrace);
+      } finally {
+        _refreshInFlight = null;
+      }
+    }();
+    return completer.future;
+  }
+
+  Future<void> _expireSession() async {
+    await _tokenStore.clear();
+    _sessionController.markSignedOut();
+  }
+}
+
+abstract interface class ExpenseSyncApi {
+  Future<List<MutationResultDto>> pushMutations(
+    List<MutationCandidateDto> mutations,
+  );
+
+  Future<ChangePageDto> pullChanges({String? cursor, required int limit});
+
+  Future<BootstrapPageDto> bootstrap({String? pageToken, required int limit});
+}
+
+final class DioExpenseSyncApi implements ExpenseSyncApi {
+  const DioExpenseSyncApi(this._client);
+
+  final AuthenticatedApiClient _client;
+
+  @override
+  Future<List<MutationResultDto>> pushMutations(
+    List<MutationCandidateDto> mutations,
+  ) async {
+    final response = await _client.send(
+      TransportRequest(
+        method: 'POST',
+        path: '/v1/sync/mutations',
+        data: <String, Object?>{
+          'mutations': mutations
+              .map((mutation) => mutation.toJson())
+              .toList(growable: false),
+        },
+      ),
+    );
+    final body = _successfulObject(response);
+    final results = body['results'];
+    if (results is! List) {
+      throw const FormatException('results must be an array.');
+    }
+    return results
+        .map((item) => MutationResultDto.fromJson(responseObject(item)))
+        .toList(growable: false);
+  }
+
+  @override
+  Future<ChangePageDto> pullChanges({
+    String? cursor,
+    required int limit,
+  }) async {
+    final response = await _client.send(
+      TransportRequest(
+        method: 'GET',
+        path: '/v1/sync/changes',
+        queryParameters: <String, Object?>{'cursor': ?cursor, 'limit': limit},
+      ),
+    );
+    return ChangePageDto.fromJson(_successfulObject(response));
+  }
+
+  @override
+  Future<BootstrapPageDto> bootstrap({
+    String? pageToken,
+    required int limit,
+  }) async {
+    final response = await _client.send(
+      TransportRequest(
+        method: 'GET',
+        path: '/v1/sync/bootstrap',
+        queryParameters: <String, Object?>{
+          'pageToken': ?pageToken,
+          'limit': limit,
+        },
+      ),
+    );
+    return BootstrapPageDto.fromJson(_successfulObject(response));
+  }
+
+  Map<String, Object?> _successfulObject(TransportResponse response) {
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw apiExceptionFrom(response);
+    }
+    return responseObject(response.data);
+  }
+}
+
+abstract interface class AuthenticationApi {
+  Future<AuthResponseDto> login(HouseholdMember member, String pin);
+}
+
+final class DioAuthenticationApi implements AuthenticationApi {
+  const DioAuthenticationApi(this._transport);
+
+  final HttpTransport _transport;
+
+  @override
+  Future<AuthResponseDto> login(HouseholdMember member, String pin) async {
+    final response = await _transport.send(
+      TransportRequest(
+        method: 'POST',
+        path: '/v1/auth/login',
+        data: <String, Object?>{'member': member.wireName, 'pin': pin},
+      ),
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw apiExceptionFrom(response);
+    }
+    return AuthResponseDto.fromJson(responseObject(response.data));
+  }
+}

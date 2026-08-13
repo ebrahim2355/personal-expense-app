@@ -1,0 +1,322 @@
+import '../../domain/expense.dart';
+import '../../domain/session.dart';
+
+Object? _required(Map<String, Object?> json, String key) {
+  if (!json.containsKey(key)) {
+    throw FormatException('Missing response property: $key');
+  }
+  return json[key];
+}
+
+Map<String, Object?> _objectMap(Object? value, String name) {
+  if (value is! Map) {
+    throw FormatException('$name must be an object.');
+  }
+  return value.map((key, item) => MapEntry(key.toString(), item));
+}
+
+List<Object?> _list(Object? value, String name) {
+  if (value is! List) {
+    throw FormatException('$name must be an array.');
+  }
+  return value.cast<Object?>();
+}
+
+String _string(Object? value, String name) {
+  if (value is! String) {
+    throw FormatException('$name must be a string.');
+  }
+  return value;
+}
+
+int _integer(Object? value, String name) {
+  if (value is! int) {
+    throw FormatException('$name must be an integer.');
+  }
+  return value;
+}
+
+bool _boolean(Object? value, String name) {
+  if (value is! bool) {
+    throw FormatException('$name must be a boolean.');
+  }
+  return value;
+}
+
+DateTime _instant(Object? value, String name) {
+  final parsed = DateTime.tryParse(_string(value, name));
+  if (parsed == null) {
+    throw FormatException('$name must be an RFC 3339 timestamp.');
+  }
+  return parsed.toUtc();
+}
+
+final class MemberDto {
+  const MemberDto({
+    required this.id,
+    required this.householdId,
+    required this.member,
+    required this.displayName,
+  });
+
+  factory MemberDto.fromJson(Map<String, Object?> json) => MemberDto(
+    id: _string(_required(json, 'id'), 'member.id'),
+    householdId: _string(_required(json, 'householdId'), 'member.householdId'),
+    member: HouseholdMemberWire.parse(
+      _string(_required(json, 'key'), 'member.key'),
+    ),
+    displayName: _string(_required(json, 'displayName'), 'member.displayName'),
+  );
+
+  final String id;
+  final String householdId;
+  final HouseholdMember member;
+  final String displayName;
+
+  MemberIdentity toDomain() => MemberIdentity(
+    id: id,
+    householdId: householdId,
+    member: member,
+    displayName: displayName,
+  );
+}
+
+final class AuthResponseDto {
+  const AuthResponseDto({required this.member, required this.tokens});
+
+  factory AuthResponseDto.fromJson(
+    Map<String, Object?> json,
+  ) => AuthResponseDto(
+    member: MemberDto.fromJson(_objectMap(_required(json, 'member'), 'member')),
+    tokens: SessionTokens(
+      accessToken: _string(_required(json, 'accessToken'), 'accessToken'),
+      accessTokenExpiresAt: _instant(
+        _required(json, 'accessTokenExpiresAt'),
+        'accessTokenExpiresAt',
+      ),
+      refreshToken: _string(_required(json, 'refreshToken'), 'refreshToken'),
+      refreshTokenExpiresAt: _instant(
+        _required(json, 'refreshTokenExpiresAt'),
+        'refreshTokenExpiresAt',
+      ),
+    ),
+  );
+
+  final MemberDto member;
+  final SessionTokens tokens;
+}
+
+final class ExpenseDto {
+  const ExpenseDto({
+    required this.id,
+    required this.amountMinor,
+    required this.category,
+    required this.payer,
+    required this.occurredAt,
+    required this.version,
+    required this.updatedAt,
+    this.note,
+    this.deletedAt,
+  });
+
+  factory ExpenseDto.fromJson(Map<String, Object?> json) {
+    final noteValue = _required(json, 'note');
+    final deletedValue = _required(json, 'deletedAt');
+    return ExpenseDto(
+      id: _string(_required(json, 'id'), 'expense.id'),
+      amountMinor: _integer(
+        _required(json, 'amountMinor'),
+        'expense.amountMinor',
+      ),
+      category: ExpenseCategoryWire.parse(
+        _string(_required(json, 'category'), 'expense.category'),
+      ),
+      payer: HouseholdMemberWire.parse(
+        _string(_required(json, 'payer'), 'expense.payer'),
+      ),
+      occurredAt: _instant(_required(json, 'occurredAt'), 'expense.occurredAt'),
+      note: noteValue == null ? null : _string(noteValue, 'expense.note'),
+      version: _integer(_required(json, 'version'), 'expense.version'),
+      updatedAt: _instant(_required(json, 'updatedAt'), 'expense.updatedAt'),
+      deletedAt: deletedValue == null
+          ? null
+          : _instant(deletedValue, 'expense.deletedAt'),
+    );
+  }
+
+  final String id;
+  final int amountMinor;
+  final ExpenseCategory category;
+  final HouseholdMember payer;
+  final DateTime occurredAt;
+  final String? note;
+  final int version;
+  final DateTime updatedAt;
+  final DateTime? deletedAt;
+
+  Expense toDomain({LocalSyncState syncState = LocalSyncState.synced}) =>
+      Expense(
+        id: id,
+        amountMinor: amountMinor,
+        category: category,
+        payer: payer,
+        occurredAt: occurredAt,
+        note: note,
+        version: version,
+        updatedAt: updatedAt,
+        deletedAt: deletedAt,
+        syncState: syncState,
+      );
+}
+
+enum MutationOperation { create, update, delete }
+
+extension MutationOperationWire on MutationOperation {
+  String get wireName => switch (this) {
+    MutationOperation.create => 'CREATE',
+    MutationOperation.update => 'UPDATE',
+    MutationOperation.delete => 'DELETE',
+  };
+
+  String get storedName => wireName;
+
+  static MutationOperation parse(String value) => switch (value) {
+    'CREATE' => MutationOperation.create,
+    'UPDATE' => MutationOperation.update,
+    'DELETE' => MutationOperation.delete,
+    _ => throw FormatException('Unknown mutation operation: $value'),
+  };
+}
+
+final class MutationCandidateDto {
+  const MutationCandidateDto({
+    required this.mutationId,
+    required this.entityId,
+    required this.operation,
+    required this.baseVersion,
+    this.expense,
+  });
+
+  final String mutationId;
+  final String entityId;
+  final MutationOperation operation;
+  final int baseVersion;
+  final Map<String, Object?>? expense;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'mutationId': mutationId,
+    'entityId': entityId,
+    'operation': operation.wireName,
+    'baseVersion': baseVersion,
+    if (expense != null) 'expense': expense,
+  };
+}
+
+enum MutationResultStatus { applied, conflict, rejected }
+
+final class MutationResultDto {
+  const MutationResultDto({
+    required this.mutationId,
+    required this.status,
+    this.code,
+    this.expense,
+  });
+
+  factory MutationResultDto.fromJson(Map<String, Object?> json) {
+    final statusValue = _string(_required(json, 'status'), 'result.status');
+    final status = switch (statusValue) {
+      'APPLIED' => MutationResultStatus.applied,
+      'CONFLICT' => MutationResultStatus.conflict,
+      'REJECTED' => MutationResultStatus.rejected,
+      _ => throw FormatException('Unknown mutation result: $statusValue'),
+    };
+    final expenseJson = json['expense'];
+    return MutationResultDto(
+      mutationId: _string(_required(json, 'mutationId'), 'result.mutationId'),
+      status: status,
+      code: json['code'] == null ? null : _string(json['code'], 'result.code'),
+      expense: expenseJson == null
+          ? null
+          : ExpenseDto.fromJson(_objectMap(expenseJson, 'result.expense')),
+    );
+  }
+
+  final String mutationId;
+  final MutationResultStatus status;
+  final String? code;
+  final ExpenseDto? expense;
+}
+
+final class ChangeDto {
+  const ChangeDto({
+    required this.cursor,
+    required this.originMutationId,
+    required this.expense,
+  });
+
+  factory ChangeDto.fromJson(Map<String, Object?> json) => ChangeDto(
+    cursor: _string(_required(json, 'cursor'), 'change.cursor'),
+    originMutationId: _string(
+      _required(json, 'originMutationId'),
+      'change.originMutationId',
+    ),
+    expense: ExpenseDto.fromJson(
+      _objectMap(_required(json, 'expense'), 'change.expense'),
+    ),
+  );
+
+  final String cursor;
+  final String originMutationId;
+  final ExpenseDto expense;
+}
+
+final class ChangePageDto {
+  const ChangePageDto({
+    required this.changes,
+    required this.nextCursor,
+    required this.hasMore,
+  });
+
+  factory ChangePageDto.fromJson(Map<String, Object?> json) => ChangePageDto(
+    changes: _list(_required(json, 'changes'), 'changes')
+        .map((item) => ChangeDto.fromJson(_objectMap(item, 'changes[]')))
+        .toList(growable: false),
+    nextCursor: _string(_required(json, 'nextCursor'), 'nextCursor'),
+    hasMore: _boolean(_required(json, 'hasMore'), 'hasMore'),
+  );
+
+  final List<ChangeDto> changes;
+  final String nextCursor;
+  final bool hasMore;
+}
+
+final class BootstrapPageDto {
+  const BootstrapPageDto({
+    required this.items,
+    required this.watermarkCursor,
+    required this.nextPageToken,
+    required this.hasMore,
+  });
+
+  factory BootstrapPageDto.fromJson(Map<String, Object?> json) {
+    final nextToken = _required(json, 'nextPageToken');
+    return BootstrapPageDto(
+      items: _list(_required(json, 'items'), 'items')
+          .map((item) => ExpenseDto.fromJson(_objectMap(item, 'items[]')))
+          .toList(growable: false),
+      watermarkCursor: _string(
+        _required(json, 'watermarkCursor'),
+        'watermarkCursor',
+      ),
+      nextPageToken: nextToken == null
+          ? null
+          : _string(nextToken, 'nextPageToken'),
+      hasMore: _boolean(_required(json, 'hasMore'), 'hasMore'),
+    );
+  }
+
+  final List<ExpenseDto> items;
+  final String watermarkCursor;
+  final String? nextPageToken;
+  final bool hasMore;
+}
