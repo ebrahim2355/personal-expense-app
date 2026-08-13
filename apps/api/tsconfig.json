@@ -23,5 +23,10 @@
     "useUnknownInCatchVariables": true,
     "skipLibCheck": true
   },
-  "include": ["prisma.config.ts", "src/**/*.ts", "test/**/*.ts"]
+  "include": [
+    "prisma.config.ts",
+    "scripts/**/*.ts",
+    "src/**/*.ts",
+    "test/**/*.ts"
+  ]
 }
