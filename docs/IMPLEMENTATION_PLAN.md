@@ -13,7 +13,37 @@ Node.js v24.15.0
 npm 11.12.1
 ```
 
-This is not an architectural blocker. The first implementation milestone must initialize and pin the repository/tooling deliberately. The commands below are the target workflow after the corresponding scaffold exists; they are not claimed to work in the current documentation-only state.
+The repository was subsequently initialized on `main`, and the documentation baseline was pushed before scaffolding. The commands below remain the target workflow as each milestone lands.
+
+### Scaffold verification — 2026-08-13
+
+The monorepo/tooling scaffold now includes the npm API workspace, strict TypeScript Express liveness service, Prisma PostgreSQL CLI foundation without data models, Android-only Flutter shell, OpenAPI location/lint, environment placeholders, root scripts, and contributor README. The Android namespace/application ID is `com.sumonebrahim.houseexpenses`.
+
+These commands were run successfully on the inspected Windows environment:
+
+```powershell
+npm.cmd install
+npm.cmd run openapi:lint
+npm.cmd run format:check
+npm.cmd run lint
+npm.cmd run typecheck
+npm.cmd test
+npm.cmd run build
+npm.cmd run prisma:generate --workspace @expenses/api
+npm.cmd run prisma:validate --workspace @expenses/api
+
+Set-Location apps/mobile
+flutter pub get
+dart format --output=none --set-exit-if-changed .
+flutter analyze
+flutter test
+```
+
+The compiled API was also started on a temporary local port and `GET /health/live` returned `{"status":"ok"}`. The API suite contains one passing liveness test, and the Flutter suite contains one passing shell widget test.
+
+`flutter build apk --debug` was not run: `flutter doctor -v` found Android SDK 36/build-tools 36 but no JDK, with `JAVA_HOME` unset and no `java` binary on `PATH`. Install/configure JDK 17, rerun `flutter doctor -v`, then run the documented build command.
+
+No Docker configuration was added because this scaffold does not connect to PostgreSQL or run PostgreSQL integration tests. Reassess local PostgreSQL tooling in the database milestone and document the concrete need before adding it.
 
 ## 2. Delivery principles
 
@@ -31,11 +61,11 @@ This is not an architectural blocker. The first implementation milestone must in
 
 Outputs:
 
-- Initialize Git, root `.gitignore`, `.editorconfig`, `README.md`, private npm workspace metadata, lockfile, CI workflow, and local PostgreSQL development configuration.
+- Initialize Git, root `.gitignore`, `.editorconfig`, `README.md`, private npm workspace metadata, lockfile, and CI workflow. Add local PostgreSQL tooling only when integration tests demonstrate the need.
 - Pin npm to `11.12.1`, Node to the compatible 24.x line, and document Flutter `3.47.0`/Dart `3.13.0`. Prefer a project Flutter version manager only if the team will actually use it.
 - Create empty structural directories from the final tree without feature implementations.
-- Establish root scripts: `openapi:lint`, `openapi:generate`, `lint`, `typecheck`, `test`, and workspace-specific Prisma scripts.
-- Decide the permanent Android application ID before running the Flutter scaffold. `app.household.expenses` is a safe placeholder for development, not a Play Store ownership claim.
+- Establish root scripts for contract linting plus API/mobile formatting, lint/type-check, test, and build checks. Add deterministic OpenAPI generation with the contract implementation milestone.
+- Use Android application ID `com.sumonebrahim.houseexpenses`; change it only through the documented Gradle/Kotlin locations before distribution.
 
 Commands/checks:
 
@@ -66,7 +96,7 @@ Commands/checks:
 npm.cmd run openapi:lint
 npm.cmd run openapi:generate
 npm.cmd run typecheck
-npm.cmd test -- --runInBand
+npm.cmd test
 Set-Location apps/mobile
 dart format --output=none --set-exit-if-changed .
 flutter analyze
@@ -306,7 +336,7 @@ At minimum, preserve these scenarios as named automated tests:
 | Railway proxy/connections/migration error | Bad client IP limits, outage, or schema skew. | Strict trusted-proxy setting, pool limits, pre-deploy committed migrations, readiness, staging deploy and backup/restore drill. |
 | Contract/generated model drift | Mobile/API incompatibility. | Single OpenAPI source, deterministic generation, CI lint and clean-diff check, contract examples used in tests. |
 
-No current blocker changes the architecture. Before a public Android release, the owner must choose the permanent application ID/signing identity; that is a release decision, not a blocker for the planned implementation.
+No current blocker changes the architecture. The Android application ID is now `com.sumonebrahim.houseexpenses`; release signing identity and protected signing configuration must still be established before public distribution.
 
 ## 6. Proposed final directory tree
 
@@ -316,7 +346,7 @@ expenses/
 ├── .gitignore
 ├── AGENTS.md
 ├── README.md
-├── compose.yaml                         # local PostgreSQL only
+├── compose.yaml                         # optional later, only if DB tests justify it
 ├── package.json                         # private workspace/scripts
 ├── package-lock.json
 ├── .github/
