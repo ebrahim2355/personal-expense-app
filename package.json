@@ -1,0 +1,35 @@
+{
+  "name": "personal-expense-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline-first household expense application monorepo",
+  "packageManager": "npm@11.12.1",
+  "engines": {
+    "node": ">=24.0.0 <25",
+    "npm": ">=11.0.0 <12"
+  },
+  "workspaces": [
+    "apps/api"
+  ],
+  "scripts": {
+    "openapi:lint": "redocly lint packages/contracts/openapi.yaml",
+    "format": "npm run format --workspace @expenses/api",
+    "format:check": "npm run format:check --workspace @expenses/api",
+    "lint": "npm run lint --workspace @expenses/api",
+    "typecheck": "npm run typecheck --workspace @expenses/api",
+    "test": "npm test --workspace @expenses/api",
+    "build": "npm run build --workspace @expenses/api",
+    "check": "npm run openapi:lint && npm run format:check && npm run lint && npm run typecheck && npm test && npm run build",
+    "mobile:format": "cd apps/mobile && dart format .",
+    "mobile:format:check": "cd apps/mobile && dart format --output=none --set-exit-if-changed .",
+    "mobile:lint": "cd apps/mobile && flutter analyze",
+    "mobile:typecheck": "cd apps/mobile && flutter analyze",
+    "mobile:test": "cd apps/mobile && flutter test",
+    "mobile:build": "cd apps/mobile && flutter build apk --debug",
+    "mobile:check": "npm run mobile:format:check && npm run mobile:lint && npm run mobile:test",
+    "check:all": "npm run check && npm run mobile:check"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^2.46.1"
+  }
+}

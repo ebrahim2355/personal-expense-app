@@ -1,0 +1,45 @@
+openapi: 3.1.0
+info:
+  title: Household Expenses API
+  version: 0.1.0
+  description: >-
+    The single HTTP contract for the household expense application. This
+    scaffold exposes only liveness; authentication and synchronization are
+    intentionally deferred to later milestones.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: /
+    description: The host selected by the client or deployment.
+tags:
+  - name: Operations
+    description: Service health endpoints.
+paths:
+  /health/live:
+    get:
+      tags:
+        - Operations
+      operationId: getLiveness
+      summary: Check whether the API process is running
+      security: []
+      responses:
+        '200':
+          description: The API process is running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '400':
+          description: The request could not be processed.
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          const: ok
