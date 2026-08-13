@@ -1,39 +1,41 @@
 # Household Expenses
 
-Production-oriented monorepo scaffold for a private, offline-first Android household expense app and its Railway-hosted API. This milestone contains only development foundations: an Express liveness endpoint, an Android Flutter shell, the initial OpenAPI contract, and validation tooling. Authentication, expenses, synchronization, and database models are intentionally not implemented yet.
+Private, offline-first Android expense sharing for Sumon and Ebrahim. This
+monorepo currently contains a production-oriented v1 Express/PostgreSQL backend
+and a minimal Flutter Android shell. The Flutter expense, authentication, and
+sync features remain future milestones.
+
+Money is BDT only and is represented as integer poisha. The API never accepts a
+floating-point or decimal money value.
 
 ## Repository layout
 
 ```text
-apps/api                    Node.js, TypeScript, Express, Prisma tooling
-apps/mobile                 Flutter Android application
-packages/contracts          single OpenAPI contract
-docs                        product, architecture, and implementation guidance
+apps/api                    Express 5, TypeScript, Prisma/PostgreSQL backend
+apps/mobile                 Flutter Android shell (not an npm workspace)
+packages/contracts          authoritative OpenAPI 3.1 contract
+docs                        product, architecture, and delivery guidance
 ```
-
-Flutter is not an npm workspace. The root npm workspace contains only `apps/api`.
 
 ## Prerequisites
 
-Verified scaffold toolchain:
-
-- Node.js `24.15.0`
-- npm `11.12.1`
-- Flutter `3.47.0` with Dart `3.13.0`
+- Node.js `24.x` and npm `11.x`
+- PostgreSQL (Railway PostgreSQL in production)
+- Flutter `3.47.x` with Dart `3.13.x` for the Android shell
 - Git
+- Optional: Docker Desktop for an isolated local PostgreSQL test database
 
-For Android run/build commands, also install Android SDK 36 or another Flutter-supported SDK and a JDK compatible with the generated Gradle project (JDK 17 is recommended), set `JAVA_HOME`, and put `%JAVA_HOME%\bin` on `PATH`. Confirm with `flutter doctor -v`.
+The repository was verified with Node `24.15.0`, npm `11.12.1`, Flutter
+`3.47.0`, Dart `3.13.0`, and PostgreSQL `18.4`. PostgreSQL—not SQLite—is
+required for API integration tests.
 
-No Docker configuration is included. The current scaffold neither connects to PostgreSQL nor runs PostgreSQL integration tests; local database infrastructure should be added with that milestone only if the test workflow genuinely requires it.
+## Install
 
-## Clone and install
-
-### Windows PowerShell
+Windows PowerShell:
 
 ```powershell
 git clone https://github.com/ebrahim2355/personal-expense-app.git
 Set-Location personal-expense-app
-
 npm.cmd install
 
 Set-Location apps/mobile
@@ -41,76 +43,150 @@ flutter pub get
 Set-Location ../..
 ```
 
-### macOS/Linux or a POSIX shell
+POSIX shell:
 
 ```bash
 git clone https://github.com/ebrahim2355/personal-expense-app.git
 cd personal-expense-app
-
 npm install
-
-cd apps/mobile
-flutter pub get
-cd ../..
+(cd apps/mobile && flutter pub get)
 ```
 
-The API health shell defaults to port `3000` and needs no environment file. Before a future database command or deployment, copy `apps/api/.env.example` to `apps/api/.env` and replace every angle-bracket placeholder. Never commit `.env` or real credentials.
+## Configure and run the API
 
-`apps/mobile/.env.example` records the future API base URL placeholder only. The current shell does not load it; networking configuration will use an explicit build-time value when Dio integration is implemented.
+Copy the placeholder template and replace every required value. Never commit the
+resulting `.env` file.
 
-## Run the API
+```powershell
+Copy-Item apps/api/.env.example apps/api/.env
+```
 
-### Windows PowerShell
+```bash
+cp apps/api/.env.example apps/api/.env
+```
+
+At minimum, runtime configuration requires `DATABASE_URL`, two independent
+random signing secrets of at least 32 characters, and the environment settings
+documented in [apps/api/.env.example](apps/api/.env.example). Production also
+requires `TRUST_PROXY_HOPS` greater than zero, HTTPS CORS origins if browser
+clients are ever allowed, and stable secret values across deployments.
+
+Apply committed migrations; never use `prisma db push`:
+
+```powershell
+npm.cmd run prisma:generate --workspace @expenses/api
+npm.cmd run prisma:validate --workspace @expenses/api
+npm.cmd run prisma:migrate:deploy --workspace @expenses/api
+```
+
+For development-only schema authoring, use a disposable development database:
+
+```powershell
+npm.cmd run prisma:migrate:dev --workspace @expenses/api -- --name <MIGRATION_NAME>
+```
+
+Provision the fixed household and both members explicitly. Set initial PINs in
+the process environment, run the command once, then remove those PIN variables.
+The command writes only Argon2id hashes and never prints PINs.
+
+```powershell
+$env:SUMON_INITIAL_PIN = '<SUMON_6_TO_12_DIGIT_PIN>'
+$env:EBRAHIM_INITIAL_PIN = '<EBRAHIM_6_TO_12_DIGIT_PIN>'
+npm.cmd run members:provision --workspace @expenses/api
+Remove-Item Env:SUMON_INITIAL_PIN
+Remove-Item Env:EBRAHIM_INITIAL_PIN
+```
+
+```bash
+SUMON_INITIAL_PIN='<SUMON_6_TO_12_DIGIT_PIN>' \
+EBRAHIM_INITIAL_PIN='<EBRAHIM_6_TO_12_DIGIT_PIN>' \
+npm run members:provision --workspace @expenses/api
+```
+
+Start the API:
 
 ```powershell
 npm.cmd run dev --workspace @expenses/api
 ```
 
-In a second PowerShell window:
+```bash
+npm run dev --workspace @expenses/api
+```
+
+Check process liveness and database readiness separately:
 
 ```powershell
 Invoke-RestMethod http://localhost:3000/health/live
+Invoke-RestMethod http://localhost:3000/health/ready
+Invoke-RestMethod http://localhost:3000/health
 ```
 
-Expected response:
+`/health/live` makes no database claim. `/health/ready` and `/health` return
+HTTP `503` when PostgreSQL is unavailable.
 
-```json
-{
-  "status": "ok"
-}
-```
+## API behavior
 
-Platform-neutral equivalents are `npm run dev --workspace @expenses/api` and `curl http://localhost:3000/health/live`.
+The sole HTTP contract is
+[packages/contracts/openapi.yaml](packages/contracts/openapi.yaml). Implemented
+routes are:
 
-To run compiled output instead:
+- `POST /v1/auth/login`, `POST /v1/auth/refresh`, `POST /v1/auth/logout`, and
+  `GET /v1/auth/me`.
+- `POST /v1/sync/mutations` for ordered idempotent create/update/delete batches.
+- `GET /v1/sync/bootstrap` for first-device snapshot pagination.
+- `GET /v1/sync/changes` for cursor-ordered deltas and tombstones.
+- `/health/live`, `/health/ready`, and `/health` for operations.
+
+Expense IDs and mutation IDs are distinct client-generated UUIDs. Update/delete
+use `baseVersion`; conflicts return the authoritative server expense/tombstone.
+Accepted writes, change events, and processed-mutation receipts are atomic.
+Dashboard and 50/50 summary calculations stay in Flutter so they remain
+available offline; there is intentionally no server summary endpoint.
+
+## PostgreSQL tests
+
+Integration tests erase all rows in their target database. Use a dedicated test
+database only. One optional Docker workflow is shown because the sync suite must
+exercise actual PostgreSQL behavior:
 
 ```powershell
-npm.cmd run build --workspace @expenses/api
-npm.cmd run start --workspace @expenses/api
+docker run --name expenses-api-postgres-test `
+  -e POSTGRES_USER=expenses_test `
+  -e POSTGRES_PASSWORD=expenses_test `
+  -e POSTGRES_DB=expenses_test `
+  -p 127.0.0.1:55432:5432 `
+  -d postgres:18.4-alpine
+
+$env:DATABASE_URL = 'postgresql://expenses_test:expenses_test@127.0.0.1:55432/expenses_test?schema=public'
+$env:TEST_DATABASE_URL = $env:DATABASE_URL
+npm.cmd run prisma:migrate:deploy --workspace @expenses/api
+npm.cmd test --workspace @expenses/api
 ```
 
-## Run the Flutter shell
+POSIX shell:
 
-List Android devices/emulators, then launch using a returned device ID:
+```bash
+docker run --name expenses-api-postgres-test \
+  -e POSTGRES_USER=expenses_test \
+  -e POSTGRES_PASSWORD=expenses_test \
+  -e POSTGRES_DB=expenses_test \
+  -p 127.0.0.1:55432:5432 \
+  -d postgres:18.4-alpine
 
-```powershell
-Set-Location apps/mobile
-flutter devices
-flutter run -d <ANDROID_DEVICE_ID>
+export DATABASE_URL='postgresql://expenses_test:expenses_test@127.0.0.1:55432/expenses_test?schema=public'
+export TEST_DATABASE_URL="$DATABASE_URL"
+npm run prisma:migrate:deploy --workspace @expenses/api
+npm test --workspace @expenses/api
 ```
 
-POSIX shells use the same Flutter commands after `cd apps/mobile`.
-
-The Android namespace and application ID are `com.sumonebrahim.houseexpenses`. To change this before distribution, update both `namespace` and `applicationId` in `apps/mobile/android/app/build.gradle.kts`, then move `MainActivity.kt` to the matching directory under `apps/mobile/android/app/src/main/kotlin` and update its `package` declaration. Also update signing/store configuration that refers to the old ID.
+If `TEST_DATABASE_URL` is absent, PostgreSQL integration tests are reported as
+skipped; unit and HTTP-shell tests still run.
 
 ## Validation commands
 
-### API and contract
-
-Run from the repository root:
+From the repository root:
 
 ```powershell
-npm.cmd install
 npm.cmd run openapi:lint
 npm.cmd run format:check
 npm.cmd run lint
@@ -119,20 +195,11 @@ npm.cmd test
 npm.cmd run build
 ```
 
-`npm.cmd run check` runs the contract lint plus all API checks in order. On POSIX shells, replace `npm.cmd` with `npm`.
+`npm.cmd run check` runs those contract/API checks in order. Replace `npm.cmd`
+with `npm` on POSIX systems. To include integration coverage, set
+`TEST_DATABASE_URL` first as shown above.
 
-The Prisma CLI foundation is present without data models. Once `DATABASE_URL` is configured with a non-secret development database URL:
-
-```powershell
-npm.cmd run prisma:generate --workspace @expenses/api
-npm.cmd run prisma:validate --workspace @expenses/api
-```
-
-Do not use `prisma db push`; future schema changes must use committed migrations.
-
-### Flutter
-
-Run from `apps/mobile`:
+Flutter checks run from `apps/mobile`:
 
 ```powershell
 flutter pub get
@@ -142,28 +209,51 @@ flutter test
 flutter build apk --debug
 ```
 
-The direct commands are identical on POSIX shells. Root convenience aliases are also available:
+Launch an Android device/emulator with `flutter devices`, then
+`flutter run -d <ANDROID_DEVICE_ID>`. The Android application ID is
+`com.sumonebrahim.houseexpenses`; change `namespace` and `applicationId` in
+`apps/mobile/android/app/build.gradle.kts`, the `MainActivity.kt` package/path,
+and signing configuration together before distribution.
 
-```powershell
-npm.cmd run mobile:format
-npm.cmd run mobile:format:check
-npm.cmd run mobile:lint
-npm.cmd run mobile:typecheck
-npm.cmd run mobile:test
-npm.cmd run mobile:build
+## Railway deployment
+
+Create a Railway PostgreSQL service and an API service from this shared npm
+monorepo. Keep the repository root as the service root so the workspace lockfile
+and generated Prisma client are available. Configure:
+
+```text
+Build command:      npm ci && npm run build --workspace @expenses/api
+Pre-deploy command: npm run prisma:migrate:deploy --workspace @expenses/api
+Start command:      npm run start --workspace @expenses/api
+Healthcheck path:   /health/ready
 ```
 
-`flutter analyze` is both the Dart/Flutter type-check and lint command. `npm.cmd run mobile:check` runs formatting verification, analysis, and tests; it deliberately omits the Android build because that requires a configured JDK/Android toolchain.
+Set `DATABASE_URL` from the PostgreSQL service reference and configure all
+runtime variables from the API environment template. Keep PostgreSQL on
+Railway's private network, expose only the API over Railway HTTPS, and set
+`TRUST_PROXY_HOPS=1` for the normal single Railway proxy path. Provision the two
+members as an explicit one-off command inside the linked API service after the
+migrations succeed; do not add PIN provisioning to every deployment.
 
-## Environment files and secrets
+These commands follow Railway's current guidance for
+[shared monorepos](https://docs.railway.com/deployments/monorepo),
+[pre-deploy migrations](https://docs.railway.com/deployments/pre-deploy-command),
+and [custom start commands](https://docs.railway.com/deployments/start-command).
 
-- Commit only `.env.example` files containing placeholders.
-- Keep API `.env`, Railway values, database URLs, JWT material, PINs, Android key properties, and signing stores outside Git.
-- The root `.gitignore` excludes common Node, Flutter, Dart, Gradle, IDE, coverage, log, local database, generated-code, environment, and signing artifacts.
+## Security and scope
 
-## Product and architecture guidance
+- Do not commit database URLs, signing keys, PINs, token values, Android signing
+  material, `.env` files, logs, or local databases.
+- Access JWTs are short-lived. Refresh tokens are opaque, hashed at rest,
+  rotated, revocable, and family-revoked on detected reuse.
+- API inputs are strictly validated; ORM queries are household scoped; logs
+  redact authorization, token, PIN, hash, and database URL fields.
+- This release has no registration, member management, hard delete, server
+  dashboard summary, public API key, iOS app, or web administration.
+
+Further guidance:
 
 - [Product specification](docs/PRODUCT_SPEC.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
-- [Repository engineering rules](AGENTS.md)
+- [Repository rules](AGENTS.md)
