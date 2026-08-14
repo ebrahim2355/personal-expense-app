@@ -18,4 +18,4 @@ export const MAX_AMOUNT_MINOR = 99_999_999_999;
 export const MAX_NOTE_CODE_POINTS = 500;
 export const MAX_MUTATIONS_PER_REQUEST = 50;
 export const DEFAULT_PAGE_SIZE = 100;
-export const MAX_PAGE_SIZE = 500;
+export const MAX_PAGE_SIZE = 250;
