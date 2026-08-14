@@ -326,6 +326,37 @@ integration('PostgreSQL API integration', () => {
     expect(loggedOutRefresh.status).toBe(401);
   });
 
+  it('serializes concurrent refresh reuse and revokes the issued family', async () => {
+    const session = await login('SUMON', sumonPin);
+    const responses = await Promise.all([
+      request(app)
+        .post('/v1/auth/refresh')
+        .send({ refreshToken: session.refreshToken }),
+      request(app)
+        .post('/v1/auth/refresh')
+        .send({ refreshToken: session.refreshToken }),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      200, 401,
+    ]);
+    const successfulResponse = responses.find(
+      (response) => response.status === 200,
+    );
+    expect(successfulResponse).toBeDefined();
+    if (successfulResponse === undefined) {
+      throw new Error('Expected one concurrent refresh request to succeed.');
+    }
+    const successful = authResponseSchema.parse(
+      successfulResponse.body as unknown,
+    );
+
+    const revokedReplacement = await request(app)
+      .post('/v1/auth/refresh')
+      .send({ refreshToken: successful.refreshToken });
+    expect(revokedReplacement.status).toBe(401);
+  }, 30_000);
+
   it('creates exactly one expense when a mutation response is retried', async () => {
     const session = await login('SUMON', sumonPin);
     const entityId = randomUUID();
