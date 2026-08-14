@@ -23,6 +23,49 @@ class RefreshReuseDetected extends Error {
   }
 }
 
+function prismaErrorCode(error: unknown): string | undefined {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string'
+  ) {
+    return error.code;
+  }
+  return undefined;
+}
+
+async function serializableTransactionWithRetry<T>(
+  prisma: DatabaseClient,
+  operation: (transaction: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await prisma.$transaction(operation, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      });
+    } catch (error) {
+      if (prismaErrorCode(error) === 'P2034' && attempt < 3) {
+        continue;
+      }
+      if (prismaErrorCode(error) === 'P2034') {
+        throw new AppError(
+          503,
+          'TRANSACTION_RETRY_EXHAUSTED',
+          'Please retry the authentication request.',
+        );
+      }
+      throw error;
+    }
+  }
+
+  throw new AppError(
+    503,
+    'TRANSACTION_RETRY_EXHAUSTED',
+    'Please retry the authentication request.',
+  );
+}
+
 const memberSelect = {
   id: true,
   householdId: true,
@@ -96,7 +139,8 @@ export class AuthService {
     const now = new Date();
 
     try {
-      const rotated = await this.prisma.$transaction(
+      const rotated = await serializableTransactionWithRetry(
+        this.prisma,
         async (transaction) => {
           const existing = await transaction.refreshToken.findUnique({
             where: { id: tokenId },
@@ -169,7 +213,6 @@ export class AuthService {
             replacement,
           };
         },
-        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
       );
 
       if (rotated === null) {
