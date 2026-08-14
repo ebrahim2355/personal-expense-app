@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { MAX_AMOUNT_MINOR } from '../src/domain/constants.js';
 import { splitAmountMinor } from '../src/domain/money.js';
 import {
+  bootstrapQuerySchema,
+  changesQuerySchema,
   expenseInputSchema,
   parsedMutationSchema,
 } from '../src/domain/validation.js';
@@ -37,12 +39,26 @@ describe('integer money rules', () => {
       payerShareMinor: 5001,
       otherShareMinor: 5000,
     });
+    expect(splitAmountMinor(MAX_AMOUNT_MINOR)).toEqual({
+      payerShareMinor: 50_000_000_000,
+      otherShareMinor: 49_999_999_999,
+    });
   });
 
   it.each([0, -1, 1.5, Number.NaN, MAX_AMOUNT_MINOR + 1])(
     'rejects an unsupported amount: %s',
     (amountMinor) => {
       expect(() => splitAmountMinor(amountMinor)).toThrow(RangeError);
+    },
+  );
+});
+
+describe('pagination validation', () => {
+  it.each([changesQuerySchema, bootstrapQuerySchema])(
+    'enforces the documented maximum page size',
+    (schema) => {
+      expect(schema.safeParse({ limit: '250' }).success).toBe(true);
+      expect(schema.safeParse({ limit: '251' }).success).toBe(false);
     },
   );
 });
