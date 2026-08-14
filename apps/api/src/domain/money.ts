@@ -14,10 +14,13 @@ export function splitAmountMinor(amountMinor: number): EqualSplit {
     throw new RangeError('amountMinor is outside the supported integer range.');
   }
 
-  const otherShareMinor = Math.floor(amountMinor / 2);
+  // Convert at the boundary so no monetary calculation passes through binary
+  // floating-point division. Both results remain within the JSON-safe range.
+  const amount = BigInt(amountMinor);
+  const otherShareMinor = amount / 2n;
 
   return {
-    payerShareMinor: otherShareMinor + (amountMinor % 2),
-    otherShareMinor,
+    payerShareMinor: Number(otherShareMinor + (amount % 2n)),
+    otherShareMinor: Number(otherShareMinor),
   };
 }
