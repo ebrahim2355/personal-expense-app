@@ -133,7 +133,6 @@ const defaultExpense: ExpenseFields = {
 };
 
 let primarySumon: AuthenticatedMember;
-let isolatedSumon: AuthenticatedMember;
 
 function createMutation(
   operation: 'CREATE' | 'UPDATE' | 'DELETE',
@@ -203,13 +202,6 @@ integration('PostgreSQL API integration', () => {
     const primary = await prisma.household.create({
       data: { slug: `primary-${randomUUID()}`, name: 'Primary test household' },
     });
-    const isolated = await prisma.household.create({
-      data: {
-        slug: `isolated-${randomUUID()}`,
-        name: 'Isolated test household',
-      },
-    });
-
     const primaryMembers = await Promise.all([
       prisma.member.create({
         data: {
@@ -227,38 +219,16 @@ integration('PostgreSQL API integration', () => {
           pinHash: ebrahimHash,
         },
       }),
-      prisma.member.create({
-        data: {
-          householdId: isolated.id,
-          key: 'SUMON',
-          displayName: 'Sumon',
-          pinHash,
-        },
-      }),
-      prisma.member.create({
-        data: {
-          householdId: isolated.id,
-          key: 'EBRAHIM',
-          displayName: 'Ebrahim',
-          pinHash: ebrahimHash,
-        },
-      }),
     ]);
 
     const primaryMember = primaryMembers[0];
-    const isolatedMember = primaryMembers[2];
-    if (primaryMember === undefined || isolatedMember === undefined) {
+    if (primaryMember === undefined) {
       throw new Error('Test members were not created.');
     }
 
     primarySumon = {
       memberId: primaryMember.id,
       householdId: primary.id,
-      memberKey: 'SUMON',
-    };
-    isolatedSumon = {
-      memberId: isolatedMember.id,
-      householdId: isolated.id,
       memberKey: 'SUMON',
     };
   }, 30_000);
@@ -565,40 +535,70 @@ integration('PostgreSQL API integration', () => {
   });
 
   it('scopes service reads and writes to the authenticated household', async () => {
-    const entityId = randomUUID();
-    const created = await syncService.applyMutations(primarySumon, [
-      createMutation('CREATE', entityId, 0, defaultExpense) as never,
-    ]);
-    expect(created[0]?.status).toBe('APPLIED');
-
-    const crossHousehold = await syncService.applyMutations(isolatedSumon, [
-      createMutation('UPDATE', entityId, 1, {
-        ...defaultExpense,
-        amountMinor: 99_999,
-      }) as never,
-    ]);
-    expect(crossHousehold[0]).toMatchObject({
-      status: 'REJECTED',
-      code: 'ENTITY_NOT_FOUND',
+    const isolatedHousehold = await prisma.household.create({
+      data: {
+        slug: `isolated-${randomUUID()}`,
+        name: 'Isolated test household',
+      },
     });
+    const isolatedMember = await prisma.member.create({
+      data: {
+        householdId: isolatedHousehold.id,
+        key: 'SUMON',
+        displayName: 'Sumon',
+        pinHash: 'not-used-by-this-service-level-test',
+      },
+    });
+    const isolatedSumon: AuthenticatedMember = {
+      memberId: isolatedMember.id,
+      householdId: isolatedHousehold.id,
+      memberKey: 'SUMON',
+    };
+    const entityId = randomUUID();
 
-    const isolatedChanges = await syncService.getChanges(
-      isolatedSumon,
-      undefined,
-      10,
-    );
-    const isolatedBootstrap = await syncService.bootstrap(
-      isolatedSumon,
-      undefined,
-      10,
-    );
-    expect(isolatedChanges.changes).toEqual([]);
-    expect(isolatedBootstrap.items).toEqual([]);
-    expect(
-      await prisma.expense.count({
-        where: { id: entityId, householdId: isolatedSumon.householdId },
-      }),
-    ).toBe(0);
+    try {
+      const created = await syncService.applyMutations(primarySumon, [
+        createMutation('CREATE', entityId, 0, defaultExpense) as never,
+      ]);
+      expect(created[0]?.status).toBe('APPLIED');
+
+      const crossHousehold = await syncService.applyMutations(isolatedSumon, [
+        createMutation('UPDATE', entityId, 1, {
+          ...defaultExpense,
+          amountMinor: 99_999,
+        }) as never,
+      ]);
+      expect(crossHousehold[0]).toMatchObject({
+        status: 'REJECTED',
+        code: 'ENTITY_NOT_FOUND',
+      });
+
+      const isolatedChanges = await syncService.getChanges(
+        isolatedSumon,
+        undefined,
+        10,
+      );
+      const isolatedBootstrap = await syncService.bootstrap(
+        isolatedSumon,
+        undefined,
+        10,
+      );
+      expect(isolatedChanges.changes).toEqual([]);
+      expect(isolatedBootstrap.items).toEqual([]);
+      expect(
+        await prisma.expense.count({
+          where: { id: entityId, householdId: isolatedSumon.householdId },
+        }),
+      ).toBe(0);
+    } finally {
+      await prisma.processedMutation.deleteMany({
+        where: { householdId: isolatedHousehold.id },
+      });
+      await prisma.member.deleteMany({
+        where: { householdId: isolatedHousehold.id },
+      });
+      await prisma.household.delete({ where: { id: isolatedHousehold.id } });
+    }
   });
 
   it('returns a per-mutation validation rejection without applying sibling-invalid data', async () => {
