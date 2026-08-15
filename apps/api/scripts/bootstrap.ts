@@ -49,6 +49,24 @@ async function main(): Promise<void> {
     ]);
 
     await prisma.$transaction(async (transaction) => {
+      const householdCount = await transaction.household.count();
+      const existingHousehold = await transaction.household.findUnique({
+        where: { slug: environment.HOUSEHOLD_SLUG },
+      });
+
+      // A typo in HOUSEHOLD_SLUG must not silently create a second household
+      // beside the production data for this fixed-household product.
+      if (householdCount > 0 && existingHousehold === null) {
+        throw new Error(
+          'A different household already exists; verify HOUSEHOLD_SLUG.',
+        );
+      }
+      if (householdCount > 1) {
+        throw new Error(
+          'More than one household exists; provisioning was refused.',
+        );
+      }
+
       const household = await transaction.household.upsert({
         where: { slug: environment.HOUSEHOLD_SLUG },
         create: {
@@ -58,7 +76,7 @@ async function main(): Promise<void> {
         update: { name: environment.HOUSEHOLD_NAME },
       });
 
-      await transaction.member.upsert({
+      const sumon = await transaction.member.upsert({
         where: {
           householdId_key: { householdId: household.id, key: 'SUMON' },
         },
@@ -76,7 +94,7 @@ async function main(): Promise<void> {
         },
       });
 
-      await transaction.member.upsert({
+      const ebrahim = await transaction.member.upsert({
         where: {
           householdId_key: { householdId: household.id, key: 'EBRAHIM' },
         },
@@ -92,6 +110,12 @@ async function main(): Promise<void> {
           disabledAt: null,
           updatedAt: new Date(),
         },
+      });
+
+      // Re-running this explicit command is the PIN rotation operation. Revoke
+      // existing sessions, but never reset expense or synchronization data.
+      await transaction.refreshToken.deleteMany({
+        where: { memberId: { in: [sumon.id, ebrahim.id] } },
       });
     });
 
