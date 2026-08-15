@@ -46,7 +46,16 @@ export function errorHandler(logger: AppLogger): ErrorRequestHandler {
         'The request body is too large.',
       );
     } else {
-      logger.error({ requestId, err: error }, 'unhandled request error');
+      // Arbitrary driver/library errors can include query values or connection
+      // details. Keep enough structured context to correlate the incident while
+      // never returning or logging the exception message/stack.
+      logger.error(
+        {
+          requestId,
+          errorType: error instanceof Error ? error.name : typeof error,
+        },
+        'unhandled request error',
+      );
       appError = new AppError(
         500,
         'INTERNAL_ERROR',
