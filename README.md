@@ -261,30 +261,20 @@ the API environment and explains that Android background sync is best effort,
 not immediate. See [apps/mobile/README.md](apps/mobile/README.md) for the screen
 and verification details.
 
-Create a Railway PostgreSQL service and an API service from this shared npm
-monorepo. Keep the repository root as the service root so the workspace lockfile
-and generated Prisma client are available. Configure:
-## Railway deployment
+## Production deployment and Android installation
 
+The committed `railway.toml` defines the API build, production migration,
+start, readiness, and restart behavior. The complete operator runbook is
+[docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md), including:
 
-```text
-Build command:      npm ci && npm run build --workspace @expenses/api
-Pre-deploy command: npm run prisma:migrate:deploy --workspace @expenses/api
-Start command:      npm run start --workspace @expenses/api
-Healthcheck path:   /health/ready
-```
+- Railway PostgreSQL attachment, environment variables, logs, one-off member
+  provisioning, key/PIN rotation, backup/restore, rollback, and smoke tests.
+- Android production URL, package/version/icon ownership, upload-keystore setup,
+  signed APK and app-bundle commands, direct installation, data-preserving
+  upgrades, SQLite migration rules, and rollback constraints.
 
-Set `DATABASE_URL` from the PostgreSQL service reference and configure all
-runtime variables from the API environment template. Keep PostgreSQL on
-Railway's private network, expose only the API over Railway HTTPS, and set
-`TRUST_PROXY_HOPS=1` for the normal single Railway proxy path. Provision the two
-members as an explicit one-off command inside the linked API service after the
-migrations succeed; do not add PIN provisioning to every deployment.
-
-These commands follow Railway's current guidance for
-[shared monorepos](https://docs.railway.com/deployments/monorepo),
-[pre-deploy migrations](https://docs.railway.com/deployments/pre-deploy-command),
-and [custom start commands](https://docs.railway.com/deployments/start-command).
+No external Railway resource is created by repository commands. Creating or
+modifying a live Railway project remains an explicit operator action.
 
 ## Security and scope
 
