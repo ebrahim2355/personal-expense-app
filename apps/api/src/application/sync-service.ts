@@ -156,6 +156,38 @@ function jsonValue(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
+const householdWriteLockNamespace = 'expense-change-sequence';
+
+/**
+ * Stable 64-bit advisory-lock key for one household's write transactions.
+ */
+function householdWriteLockKey(householdId: string): bigint {
+  return createHash('sha256')
+    .update(`${householdWriteLockNamespace}:${householdId}`, 'utf8')
+    .digest()
+    .readBigInt64BE(0);
+}
+
+/**
+ * Serializes the write transactions of a single household so that
+ * `ExpenseChange.sequence` values are allocated in the same order the
+ * transactions commit.
+ *
+ * `sequence` comes from a PostgreSQL sequence, which hands out a number before
+ * the transaction commits. Without this lock, a transaction holding the lower
+ * number can commit after a higher one, and a client that polls
+ * `/v1/sync/changes` in that window would move its cursor past the lower number
+ * and never be sent that change again.
+ */
+export async function lockHouseholdWrites(
+  transaction: Prisma.TransactionClient,
+  householdId: string,
+): Promise<void> {
+  await transaction.$executeRaw`SELECT pg_advisory_xact_lock(${householdWriteLockKey(
+    householdId,
+  )}::bigint)`;
+}
+
 function prismaErrorCode(error: unknown): string | undefined {
   if (
     typeof error === 'object' &&
@@ -349,6 +381,8 @@ export class SyncService {
     invalidResult: MutationResult | undefined,
     hash: string,
   ): Promise<MutationResult> {
+    await lockHouseholdWrites(transaction, identity.householdId);
+
     const receipt = await transaction.processedMutation.findFirst({
       where: {
         mutationId: base.mutationId,
