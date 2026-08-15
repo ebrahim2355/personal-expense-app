@@ -44,6 +44,12 @@ flutter build apk --release `
 The base URL is configuration, not a secret. Never put tokens, PINs, or signing
 values in a Dart define. Access and refresh tokens are stored only with Android
 secure storage; Drift stores expense/outbox/sync metadata but no credentials.
+Cleartext traffic is enabled only by the debug manifest for local development;
+the main/release manifest explicitly disables it.
+
+Production signing, package/version/icon ownership, signed APK/AAB commands,
+and data-preserving install/upgrade steps are documented in
+[`docs/PRODUCTION_DEPLOYMENT.md`](../../docs/PRODUCTION_DEPLOYMENT.md).
 
 ## Generate and verify
 
