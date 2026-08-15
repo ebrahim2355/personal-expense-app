@@ -27,6 +27,7 @@ final class AppConfig {
         !uri.hasScheme ||
         !uri.hasAuthority ||
         uri.userInfo.isNotEmpty ||
+        (uri.path.isNotEmpty && uri.path != '/') ||
         uri.query.isNotEmpty ||
         uri.fragment.isNotEmpty) {
       throw StateError('API_BASE_URL must be an absolute HTTP(S) origin.');
