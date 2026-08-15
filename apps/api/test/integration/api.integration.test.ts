@@ -6,10 +6,14 @@ import { z } from 'zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AuthService } from '../../src/application/auth-service.js';
-import { SyncService } from '../../src/application/sync-service.js';
+import {
+  SyncService,
+  lockHouseholdWrites,
+} from '../../src/application/sync-service.js';
 import { createApp } from '../../src/app.js';
 import type { AppConfig } from '../../src/config/env.js';
 import type { AuthenticatedMember } from '../../src/domain/models.js';
+import { Prisma } from '../../src/generated/prisma/client.js';
 import { createLogger } from '../../src/infrastructure/logger.js';
 import { createPrismaClient } from '../../src/infrastructure/prisma.js';
 import { TokenService } from '../../src/infrastructure/token-service.js';
@@ -171,6 +175,24 @@ async function postMutations(
     .send({ mutations });
   expect(response.status).toBe(200);
   return mutationResponseSchema.parse(response.body as unknown);
+}
+
+interface Gate {
+  readonly reached: Promise<void>;
+  open: () => void;
+}
+
+function createGate(): Gate {
+  let opener: (() => void) | undefined;
+  const reached = new Promise<void>((resolve) => {
+    opener = resolve;
+  });
+  return {
+    reached,
+    open: (): void => {
+      opener?.();
+    },
+  };
 }
 
 async function clearMutableData(): Promise<void> {
@@ -533,6 +555,105 @@ integration('PostgreSQL API integration', () => {
       bootstrapItems.find((item) => item.id === deletedId)?.deletedAt,
     ).not.toBeNull();
   });
+
+  it('delivers a change whose sequence was allocated before a later change committed', async () => {
+    const householdId = primarySumon.householdId;
+    const allocatedFirstId = randomUUID();
+    const committedFirstId = randomUUID();
+    const allocated = createGate();
+    const release = createGate();
+    const occurredAt = new Date('2026-08-13T04:30:00.000Z');
+    const changedAt = new Date('2026-08-13T05:30:00.000Z');
+
+    // A mutation from the other device that has already taken its change
+    // sequence number but has not committed yet. The fixture writes at Read
+    // Committed so it stays out of Serializable conflict detection: on a nearly
+    // empty table those predicate locks cover whole index pages and would abort
+    // one of the two writers, hiding the ordering hazard under test.
+    const inFlight = prisma.$transaction(
+      async (transaction) => {
+        await lockHouseholdWrites(transaction, householdId);
+        await transaction.expense.create({
+          data: {
+            id: allocatedFirstId,
+            householdId,
+            amountMinor: 30_000n,
+            category: 'GROCERIES',
+            payerId: primarySumon.memberId,
+            occurredAt,
+            note: 'Allocated first',
+            version: 1,
+            createdAt: changedAt,
+            updatedAt: changedAt,
+          },
+        });
+        const change = await transaction.expenseChange.create({
+          data: {
+            householdId,
+            entityId: allocatedFirstId,
+            entityVersion: 1,
+            operation: 'CREATED',
+            originMutationId: randomUUID(),
+            snapshot: {
+              id: allocatedFirstId,
+              amountMinor: 30_000,
+              category: 'GROCERIES',
+              payer: 'SUMON',
+              occurredAt: occurredAt.toISOString(),
+              note: 'Allocated first',
+              version: 1,
+              updatedAt: changedAt.toISOString(),
+              deletedAt: null,
+            },
+            changedAt,
+          },
+        });
+        await transaction.expense.update({
+          where: { id: allocatedFirstId },
+          data: { lastChangeSequence: change.sequence },
+        });
+        allocated.open();
+        await release.reached;
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+        timeout: 20_000,
+        maxWait: 10_000,
+      },
+    );
+    await allocated.reached;
+
+    const push = syncService.applyMutations(primarySumon, [
+      createMutation('CREATE', committedFirstId, 0, {
+        ...defaultExpense,
+        amountMinor: 12_345,
+      }) as never,
+    ]);
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, 500);
+    });
+
+    // This is the poll that used to strand the earlier change: whatever it
+    // reports, the cursor it hands back must not skip the in-flight sequence.
+    const firstPage = await syncService.getChanges(primarySumon, undefined, 50);
+    release.open();
+    await inFlight;
+    const pushed = await push;
+    expect(pushed[0]?.status).toBe('APPLIED');
+
+    const secondPage = await syncService.getChanges(
+      primarySumon,
+      firstPage.nextCursor,
+      50,
+    );
+    const delivered = [...firstPage.changes, ...secondPage.changes].map(
+      (change) => change.expense.id,
+    );
+    expect(delivered).toEqual([allocatedFirstId, committedFirstId]);
+    expect(await prisma.expenseChange.count({ where: { householdId } })).toBe(
+      2,
+    );
+  }, 40_000);
 
   it('scopes service reads and writes to the authenticated household', async () => {
     const isolatedHousehold = await prisma.household.create({
