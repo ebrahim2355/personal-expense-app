@@ -5,8 +5,9 @@ monorepo contains a production-oriented v1 Express/PostgreSQL backend and a
 Flutter Android client with its complete v1 screens, offline-first persistence,
 secure-session HTTP, and synchronization layers.
 
-Money is BDT only and is represented as integer poisha. The API never accepts a
-floating-point or decimal money value.
+Money is BDT only and is represented as integer poisha. Amounts are whole taka,
+so a stored value is always a multiple of 100 poisha; the API never accepts a
+floating-point, decimal, or sub-taka money value.
 
 ## Repository layout
 
@@ -132,16 +133,21 @@ routes are:
 
 - `POST /v1/auth/login`, `POST /v1/auth/refresh`, `POST /v1/auth/logout`, and
   `GET /v1/auth/me`.
-- `POST /v1/sync/mutations` for ordered idempotent create/update/delete batches.
+- `POST /v1/sync/mutations` for ordered idempotent create/update/delete batches
+  covering expenses, spending periods, and loan entries.
 - `GET /v1/sync/bootstrap` for first-device snapshot pagination.
 - `GET /v1/sync/changes` for cursor-ordered deltas and tombstones.
 - `/health/live`, `/health/ready`, and `/health` for operations.
 
-Expense IDs and mutation IDs are distinct client-generated UUIDs. Update/delete
-use `baseVersion`; conflicts return the authoritative server expense/tombstone.
-Accepted writes, change events, and processed-mutation receipts are atomic.
-Dashboard and 50/50 summary calculations stay in Flutter so they remain
-available offline; there is intentionally no server summary endpoint.
+Entity IDs and mutation IDs are distinct client-generated UUIDs. Every mutation,
+change row, and bootstrap item names its `entityType` (`EXPENSE`, `PERIOD`, or
+`LOAN`, defaulting to `EXPENSE`). Update/delete use `baseVersion`; conflicts
+return the authoritative server snapshot/tombstone. Accepted writes, change
+events, and processed-mutation receipts are atomic. Exactly one spending period
+is open per household; a period is never deleted and never reopened. Dashboard,
+50/50 summary, lending net total, and history search calculations stay in Flutter
+so they remain available offline; there is intentionally no server summary or
+search endpoint.
 
 ## PostgreSQL tests
 
@@ -151,7 +157,8 @@ exercise actual PostgreSQL behavior:
 
 The recommended reproducible workflow starts its own Compose project, migrates
 and provisions it with generated test-only credentials, runs the real API and
-ten two-client Flutter scenarios, performs guarded cleanup, and stops the stack:
+thirteen two-client Flutter scenarios, performs guarded cleanup, and stops the
+stack:
 
 ```powershell
 npm.cmd run test:real-stack
@@ -252,14 +259,17 @@ The Android application ID is `com.sumonebrahim.houseexpenses`; change
 `apps/mobile/android/app/build.gradle.kts`, the `MainActivity.kt` package/path,
 and signing configuration together before distribution.
 
-The mobile app now includes the fixed-member PIN login, local SQLite dashboard,
-date-range totals and settlement, quick add/edit, filtered expense history,
-confirmed soft deletion, pending/offline/conflict feedback, and account/settings
-screen. Dashboard calculations use only active Drift rows and integer poisha.
-The default range is the current `Asia/Dhaka` month. The Settings screen labels
-the API environment and explains that Android background sync is best effort,
-not immediate. See [apps/mobile/README.md](apps/mobile/README.md) for the screen
-and verification details.
+The mobile app now includes the fixed-member PIN login, a local SQLite dashboard
+scoped to the open spending period with totals and settlement, closing a period to
+open the next one, quick add/edit, filtered and searchable expense history,
+confirmed soft deletion, a manual lending ledger with its own net total,
+pending/offline/conflict feedback, and an account/settings screen. Dashboard,
+lending, and search calculations use only active Drift rows and integer poisha.
+The dashboard has no date-range control; History keeps the optional range and
+filters. The Settings screen labels the API environment and explains that Android
+background sync is best effort, not immediate. See
+[apps/mobile/README.md](apps/mobile/README.md) for the screen and verification
+details.
 
 ## Production deployment and Android installation
 
@@ -285,7 +295,8 @@ modifying a live Railway project remains an explicit operator action.
 - API inputs are strictly validated; ORM queries are household scoped; logs
   redact authorization, token, PIN, hash, and database URL fields.
 - This release has no registration, member management, hard delete, server
-  dashboard summary, public API key, iOS app, or web administration.
+  dashboard summary, server search, sub-taka amounts, public API key, iOS app, or
+  web administration.
 
 Further guidance:
 
