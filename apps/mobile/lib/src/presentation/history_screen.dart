@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/expense.dart';
+import '../domain/spending_period.dart';
 import '../providers.dart';
 import 'common_widgets.dart';
 import 'presentation_providers.dart';
@@ -29,6 +30,8 @@ final class HistoryScreen extends ConsumerWidget {
               ),
             ),
             data: (allExpenses) {
+              // History spans every period, closed ones included, so search and
+              // the period selector are the only things that narrow it.
               final visible =
                   allExpenses.where(filter.includes).toList(growable: false)
                     ..sort((a, b) => b.occurredAt.compareTo(a.occurredAt));
@@ -94,6 +97,7 @@ final class _HistoryFilters extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final notifier = ref.read(historyFilterProvider.notifier);
+    final periods = ref.watch(visiblePeriodsProvider).valueOrNull ?? const [];
     return Material(
       color: Theme.of(context).colorScheme.surface,
       child: Padding(
@@ -101,18 +105,65 @@ final class _HistoryFilters extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            DateRangeButton(
-              range: filter.range,
-              onPressed: () async {
-                final range = await pickExpenseDateRange(context, filter.range);
-                if (range != null) {
-                  notifier.state = filter.copyWith(range: range);
-                }
-              },
+            SearchField(
+              key: const Key('history-search-field'),
+              value: filter.query,
+              hintText: 'Search amount, note, category or payer',
+              onChanged: (value) =>
+                  notifier.state = filter.copyWith(query: value),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: <Widget>[
+                Expanded(
+                  child: DateRangeButton(
+                    range: filter.range,
+                    onPressed: () async {
+                      final range = await pickExpenseDateRange(
+                        context,
+                        filter.range,
+                      );
+                      if (range != null) {
+                        notifier.state = filter.copyWith(range: range);
+                      }
+                    },
+                  ),
+                ),
+                if (filter.range != null)
+                  IconButton(
+                    key: const Key('history-clear-range'),
+                    tooltip: 'All dates',
+                    icon: const Icon(Icons.event_busy_outlined),
+                    onPressed: () =>
+                        notifier.state = filter.copyWith(clearRange: true),
+                  ),
+              ],
             ),
             const SizedBox(height: 8),
             Column(
               children: <Widget>[
+                DropdownButtonFormField<String?>(
+                  key: const Key('history-period-filter'),
+                  initialValue: filter.periodId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Spending period',
+                    isDense: true,
+                  ),
+                  items: <DropdownMenuItem<String?>>[
+                    const DropdownMenuItem<String?>(child: Text('All periods')),
+                    ...periods.map(
+                      (period) => DropdownMenuItem<String?>(
+                        value: period.id,
+                        child: Text(_periodLabel(period)),
+                      ),
+                    ),
+                  ],
+                  onChanged: (value) => notifier.state = value == null
+                      ? filter.copyWith(clearPeriod: true)
+                      : filter.copyWith(periodId: value),
+                ),
+                const SizedBox(height: 8),
                 DropdownButtonFormField<HouseholdMember?>(
                   key: const Key('history-payer-filter'),
                   initialValue: filter.payer,
@@ -169,6 +220,10 @@ final class _HistoryFilters extends ConsumerWidget {
   }
 }
 
+String _periodLabel(SpendingPeriod period) => period.isOpen
+    ? '${period.displayName} · open'
+    : '${period.displayName} · closed ${dhakaDate(period.closedAt!)}';
+
 final class _EmptyHistory extends StatelessWidget {
   const _EmptyHistory();
 
@@ -193,7 +248,8 @@ final class _EmptyHistory extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             const Text(
-              'Try changing the date, payer, or category filters.',
+              'Try a different search, or clear the date, period, payer and '
+              'category filters.',
               textAlign: TextAlign.center,
             ),
           ],
