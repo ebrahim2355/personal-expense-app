@@ -1,5 +1,7 @@
 import 'dotenv/config';
 
+import { randomUUID } from 'node:crypto';
+
 import * as argon2 from 'argon2';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { z } from 'zod';
@@ -117,9 +119,35 @@ async function main(): Promise<void> {
       await transaction.refreshToken.deleteMany({
         where: { memberId: { in: [sumon.id, ebrahim.id] } },
       });
+
+      // Every expense belongs to a spending period, so a household needs an
+      // open one before its members can record anything. Creating it here is
+      // idempotent: an existing open period is left exactly as it is, and a
+      // household whose periods have all been settled gets the next one.
+      const openPeriod = await transaction.spendingPeriod.findFirst({
+        where: { householdId: household.id, closedAt: null },
+        select: { id: true },
+      });
+
+      if (openPeriod === null) {
+        const highest = await transaction.spendingPeriod.aggregate({
+          where: { householdId: household.id },
+          _max: { sequenceNumber: true },
+        });
+        await transaction.spendingPeriod.create({
+          data: {
+            id: randomUUID(),
+            householdId: household.id,
+            sequenceNumber: (highest._max.sequenceNumber ?? 0) + 1,
+            startedAt: new Date(),
+          },
+        });
+      }
     });
 
-    process.stdout.write('Household members provisioned successfully.\n');
+    process.stdout.write(
+      'Household members and open spending period provisioned successfully.\n',
+    );
   } finally {
     await prisma.$disconnect();
   }
