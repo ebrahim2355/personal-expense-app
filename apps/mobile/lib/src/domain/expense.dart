@@ -1,4 +1,9 @@
-const int maximumAmountMinor = 99999999999;
+/// Money is stored as poisha, but only whole taka are ever accepted, so every
+/// amount is a multiple of [poishaPerTaka]. The maximum is the largest whole
+/// taka amount inside the API's `99_999_999_999` poisha ceiling.
+const int poishaPerTaka = 100;
+const int minimumAmountMinor = poishaPerTaka;
+const int maximumAmountMinor = 99999999900;
 const int maximumNoteCodePoints = 500;
 
 enum HouseholdMember { sumon, ebrahim }
@@ -84,6 +89,7 @@ final class ExpenseDraft {
     required this.payer,
     required this.occurredAt,
     this.note,
+    this.periodId,
   });
 
   final int amountMinor;
@@ -92,12 +98,20 @@ final class ExpenseDraft {
   final DateTime occurredAt;
   final String? note;
 
+  /// The spending period this expense belongs to, or null when the device has
+  /// not learned one yet. A null period leaves the choice to the server, which
+  /// files the expense into whichever period is open when the mutation lands.
+  final String? periodId;
+
   ExpenseDraft normalized() {
-    if (amountMinor < 1 || amountMinor > maximumAmountMinor) {
+    if (amountMinor < minimumAmountMinor ||
+        amountMinor > maximumAmountMinor ||
+        amountMinor % poishaPerTaka != 0) {
       throw ArgumentError.value(
         amountMinor,
         'amountMinor',
-        'Must be an integer from 1 to $maximumAmountMinor poisha.',
+        'Must be a whole number of taka from $minimumAmountMinor to '
+            '$maximumAmountMinor poisha.',
       );
     }
     if (!occurredAt.isUtc) {
@@ -124,8 +138,18 @@ final class ExpenseDraft {
       note: normalizedNote == null || normalizedNote.isEmpty
           ? null
           : normalizedNote,
+      periodId: periodId,
     );
   }
+
+  ExpenseDraft withPeriodId(String? value) => ExpenseDraft(
+    amountMinor: amountMinor,
+    category: category,
+    payer: payer,
+    occurredAt: occurredAt,
+    note: note,
+    periodId: value,
+  );
 
   Map<String, Object?> toWireJson() => <String, Object?>{
     'amountMinor': amountMinor,
@@ -133,6 +157,9 @@ final class ExpenseDraft {
     'payer': payer.wireName,
     'occurredAt': occurredAt.toUtc().toIso8601String(),
     'note': note,
+    // Omitted rather than sent as null: the contract treats an absent periodId
+    // as "file this into the open period", and rejects an explicit null.
+    if (periodId != null) 'periodId': periodId,
   };
 }
 
@@ -147,6 +174,7 @@ final class Expense {
     required this.updatedAt,
     required this.syncState,
     this.note,
+    this.periodId,
     this.deletedAt,
   });
 
@@ -156,6 +184,7 @@ final class Expense {
   final HouseholdMember payer;
   final DateTime occurredAt;
   final String? note;
+  final String? periodId;
   final int version;
   final DateTime updatedAt;
   final DateTime? deletedAt;
@@ -169,5 +198,6 @@ final class Expense {
     payer: payer,
     occurredAt: occurredAt,
     note: note,
+    periodId: periodId,
   );
 }
