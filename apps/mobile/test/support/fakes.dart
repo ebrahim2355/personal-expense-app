@@ -20,6 +20,12 @@ final class FakeExpenseSyncApi implements ExpenseSyncApi {
   final PushHandler? pushHandler;
   final List<BootstrapPageDto> _bootstrapPages;
   final List<ChangePageDto> _changePages;
+
+  /// What the default handler believes about each entity. A DELETE candidate
+  /// carries no payload, so echoing a tombstone needs the previous snapshot.
+  final Map<String, EntitySnapshotDto> serverEntities =
+      <String, EntitySnapshotDto>{};
+  final List<MutationCandidateDto> pushedCandidates = <MutationCandidateDto>[];
   int pushCalls = 0;
   int activePushes = 0;
   int maximumActivePushes = 0;
@@ -36,22 +42,28 @@ final class FakeExpenseSyncApi implements ExpenseSyncApi {
       maximumActivePushes = activePushes;
     }
     try {
+      pushedCandidates.addAll(mutations);
       final handler = pushHandler;
       if (handler != null) {
         return await handler(mutations);
       }
-      return mutations
-          .map(
-            (mutation) => MutationResultDto(
-              mutationId: mutation.mutationId,
-              status: MutationResultStatus.applied,
-              expense: expenseFromCandidate(mutation),
-            ),
-          )
-          .toList(growable: false);
+      return mutations.map(_applyToFakeServer).toList(growable: false);
     } finally {
       activePushes -= 1;
     }
+  }
+
+  /// Applies one candidate the way the server would: the payload becomes the
+  /// authoritative snapshot, a delete becomes a tombstone, and either way the
+  /// version advances.
+  MutationResultDto _applyToFakeServer(MutationCandidateDto candidate) {
+    final previous = serverEntities[candidate.entityId];
+    final version = (previous?.version ?? 0) + 1;
+    final snapshot = candidate.operation == MutationOperation.delete
+        ? tombstoneOf(previous, version: version)
+        : snapshotFromCandidate(candidate, version: version);
+    serverEntities[candidate.entityId] = snapshot;
+    return appliedResult(candidate.mutationId, snapshot);
   }
 
   @override
@@ -64,7 +76,7 @@ final class FakeExpenseSyncApi implements ExpenseSyncApi {
       return _bootstrapPages[index];
     }
     return const BootstrapPageDto(
-      items: <ExpenseDto>[],
+      items: <BootstrapItemDto>[],
       watermarkCursor: 'cursor-0',
       nextPageToken: null,
       hasMore: false,
@@ -88,6 +100,50 @@ final class FakeExpenseSyncApi implements ExpenseSyncApi {
   }
 }
 
+EntitySnapshotDto expenseSnapshot(ExpenseDto expense) =>
+    EntitySnapshotDto(entityType: SyncEntityType.expense, expense: expense);
+
+EntitySnapshotDto periodSnapshot(PeriodDto period) =>
+    EntitySnapshotDto(entityType: SyncEntityType.period, period: period);
+
+EntitySnapshotDto loanSnapshot(LoanDto loan) =>
+    EntitySnapshotDto(entityType: SyncEntityType.loan, loan: loan);
+
+/// The result the server returns once it has applied a mutation, with the
+/// snapshot placed on the property that matches its entity type.
+MutationResultDto appliedResult(
+  String mutationId,
+  EntitySnapshotDto snapshot, {
+  MutationResultStatus status = MutationResultStatus.applied,
+  String? code,
+}) => MutationResultDto(
+  mutationId: mutationId,
+  status: status,
+  entityType: snapshot.entityType,
+  code: code,
+  expense: snapshot.expense,
+  period: snapshot.period,
+  loan: snapshot.loan,
+);
+
+/// Rebuilds the entity a CREATE or UPDATE candidate describes, dispatching on
+/// the candidate's entity type so a period is never read as an expense.
+EntitySnapshotDto snapshotFromCandidate(
+  MutationCandidateDto candidate, {
+  int version = 1,
+  DateTime? updatedAt,
+}) => switch (candidate.entityType) {
+  SyncEntityType.expense => expenseSnapshot(
+    expenseFromCandidate(candidate, version: version, updatedAt: updatedAt),
+  ),
+  SyncEntityType.period => periodSnapshot(
+    periodFromCandidate(candidate, version: version, updatedAt: updatedAt),
+  ),
+  SyncEntityType.loan => loanSnapshot(
+    loanFromCandidate(candidate, version: version, updatedAt: updatedAt),
+  ),
+};
+
 ExpenseDto expenseFromCandidate(
   MutationCandidateDto candidate, {
   int version = 1,
@@ -101,9 +157,92 @@ ExpenseDto expenseFromCandidate(
     payer: HouseholdMemberWire.parse(payload['payer']! as String),
     occurredAt: DateTime.parse(payload['occurredAt']! as String).toUtc(),
     note: payload['note'] as String?,
+    periodId: payload['periodId'] as String?,
     version: version,
     updatedAt: (updatedAt ?? DateTime.utc(2026, 8, 13, 12)).toUtc(),
   );
+}
+
+PeriodDto periodFromCandidate(
+  MutationCandidateDto candidate, {
+  int version = 1,
+  DateTime? updatedAt,
+}) {
+  final payload = candidate.period!;
+  final closedAt = payload['closedAt'] as String?;
+  return PeriodDto(
+    id: candidate.entityId,
+    sequenceNumber: payload['sequenceNumber']! as int,
+    startedAt: DateTime.parse(payload['startedAt']! as String).toUtc(),
+    closedAt: closedAt == null ? null : DateTime.parse(closedAt).toUtc(),
+    note: payload['note'] as String?,
+    version: version,
+    updatedAt: (updatedAt ?? DateTime.utc(2026, 8, 13, 12)).toUtc(),
+  );
+}
+
+LoanDto loanFromCandidate(
+  MutationCandidateDto candidate, {
+  int version = 1,
+  DateTime? updatedAt,
+}) {
+  final payload = candidate.loan!;
+  return LoanDto(
+    id: candidate.entityId,
+    debtor: HouseholdMemberWire.parse(payload['debtor']! as String),
+    amountMinor: payload['amountMinor']! as int,
+    occurredAt: DateTime.parse(payload['occurredAt']! as String).toUtc(),
+    note: payload['note'] as String?,
+    version: version,
+    updatedAt: (updatedAt ?? DateTime.utc(2026, 8, 13, 12)).toUtc(),
+  );
+}
+
+/// The tombstone a DELETE produces. Periods are never deleted — the server
+/// answers INVALID_MUTATION — so asking for one here is a test-authoring bug.
+EntitySnapshotDto tombstoneOf(
+  EntitySnapshotDto? previous, {
+  required int version,
+  DateTime? deletedAt,
+}) {
+  if (previous == null) {
+    throw StateError('Cannot delete an entity the fake server never saw.');
+  }
+  final at = deletedAt ?? DateTime.utc(2026, 8, 13, 13);
+  switch (previous.entityType) {
+    case SyncEntityType.expense:
+      final dto = previous.expense!;
+      return expenseSnapshot(
+        ExpenseDto(
+          id: dto.id,
+          amountMinor: dto.amountMinor,
+          category: dto.category,
+          payer: dto.payer,
+          occurredAt: dto.occurredAt,
+          note: dto.note,
+          periodId: dto.periodId,
+          version: version,
+          updatedAt: at,
+          deletedAt: at,
+        ),
+      );
+    case SyncEntityType.period:
+      throw StateError('A spending period cannot be deleted.');
+    case SyncEntityType.loan:
+      final dto = previous.loan!;
+      return loanSnapshot(
+        LoanDto(
+          id: dto.id,
+          debtor: dto.debtor,
+          amountMinor: dto.amountMinor,
+          occurredAt: dto.occurredAt,
+          note: dto.note,
+          version: version,
+          updatedAt: at,
+          deletedAt: at,
+        ),
+      );
+  }
 }
 
 ExpenseDto remoteExpense({
@@ -116,12 +255,52 @@ ExpenseDto remoteExpense({
   DateTime? updatedAt,
   DateTime? deletedAt,
   String? note,
+  String? periodId,
 }) => ExpenseDto(
   id: id,
   amountMinor: amountMinor,
   category: category,
   payer: payer,
   occurredAt: occurredAt ?? DateTime.utc(2026, 8, 1, 8),
+  note: note,
+  periodId: periodId,
+  version: version,
+  updatedAt: updatedAt ?? DateTime.utc(2026, 8, 13, 12),
+  deletedAt: deletedAt,
+);
+
+PeriodDto remotePeriod({
+  required String id,
+  required int sequenceNumber,
+  int version = 1,
+  DateTime? startedAt,
+  DateTime? closedAt,
+  DateTime? updatedAt,
+  String? note,
+}) => PeriodDto(
+  id: id,
+  sequenceNumber: sequenceNumber,
+  startedAt: startedAt ?? DateTime.utc(2026, 8, 1),
+  closedAt: closedAt,
+  note: note,
+  version: version,
+  updatedAt: updatedAt ?? DateTime.utc(2026, 8, 13, 12),
+);
+
+LoanDto remoteLoan({
+  required String id,
+  required int amountMinor,
+  int version = 1,
+  HouseholdMember debtor = HouseholdMember.ebrahim,
+  DateTime? occurredAt,
+  DateTime? updatedAt,
+  DateTime? deletedAt,
+  String? note,
+}) => LoanDto(
+  id: id,
+  debtor: debtor,
+  amountMinor: amountMinor,
+  occurredAt: occurredAt ?? DateTime.utc(2026, 8, 2, 9),
   note: note,
   version: version,
   updatedAt: updatedAt ?? DateTime.utc(2026, 8, 13, 12),
