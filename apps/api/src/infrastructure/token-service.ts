@@ -10,8 +10,9 @@ import { jwtVerify, SignJWT } from 'jose';
 import { z } from 'zod';
 
 import type { AppConfig } from '../config/env.js';
-import { MEMBER_KEYS } from '../domain/constants.js';
+import { MEMBER_KEYS, SYNC_ENTITY_TYPES } from '../domain/constants.js';
 import { AppError } from '../domain/errors.js';
+import type { SyncEntityType } from '../domain/constants.js';
 import type { AuthenticatedMember } from '../domain/models.js';
 
 const accessClaimsSchema = z.object({
@@ -30,10 +31,17 @@ interface BootstrapPayload {
   kind: 'bootstrap';
   householdId: string;
   watermark: string;
-  afterId: string;
+  entityType: SyncEntityType;
+  afterId: string | null;
 }
 
 type OpaquePayload = CursorPayload | BootstrapPayload;
+
+export interface BootstrapPosition {
+  watermark: bigint;
+  entityType: SyncEntityType;
+  afterId: string | null;
+}
 
 export interface IssuedAccessToken {
   token: string;
@@ -189,27 +197,23 @@ export class TokenService {
 
   public encodeBootstrapToken(
     householdId: string,
-    watermark: bigint,
-    afterId: string,
+    position: BootstrapPosition,
   ): string {
     return this.encodeOpaque({
       kind: 'bootstrap',
       householdId,
-      watermark: watermark.toString(),
-      afterId,
+      watermark: position.watermark.toString(),
+      entityType: position.entityType,
+      afterId: position.afterId,
     });
   }
 
   public decodeBootstrapToken(
     token: string,
     householdId: string,
-  ): { watermark: bigint; afterId: string } {
+  ): BootstrapPosition {
     const payload = this.decodeOpaque(token);
-    if (
-      payload.kind !== 'bootstrap' ||
-      payload.householdId !== householdId ||
-      !z.uuid().safeParse(payload.afterId).success
-    ) {
+    if (payload.kind !== 'bootstrap' || payload.householdId !== householdId) {
       throw new AppError(
         422,
         'INVALID_PAGE_TOKEN',
@@ -222,7 +226,11 @@ export class TokenService {
       if (watermark < 0n) {
         throw new Error('negative');
       }
-      return { watermark, afterId: payload.afterId };
+      return {
+        watermark,
+        entityType: payload.entityType,
+        afterId: payload.afterId,
+      };
     } catch {
       throw new AppError(
         422,
@@ -290,7 +298,8 @@ export class TokenService {
           kind: z.literal('bootstrap'),
           householdId: z.uuid(),
           watermark: z.string().regex(/^\d+$/),
-          afterId: z.uuid(),
+          entityType: z.enum(SYNC_ENTITY_TYPES),
+          afterId: z.uuid().nullable(),
         })
         .parse(decoded);
     } catch {
