@@ -8,17 +8,15 @@ import '../../domain/expense.dart';
 import '../local/app_database.dart';
 import '../local/database_mappers.dart';
 import '../remote/api_models.dart';
+import 'local_mutations.dart';
+
+export 'local_mutations.dart'
+    show LocalMutationEvent, OutboxStatus, OutboxStatusStorage;
 
 final class ExpenseNotFoundException implements Exception {
   const ExpenseNotFoundException(this.id);
 
   final String id;
-}
-
-final class LocalMutationEvent {
-  const LocalMutationEvent(this.expenseId);
-
-  final String expenseId;
 }
 
 abstract interface class ExpenseRepository {
@@ -60,7 +58,9 @@ final class DriftExpenseRepository implements ExpenseRepository {
 
   @override
   Future<Expense> create(ExpenseDraft draft) async {
-    final normalized = draft.normalized();
+    final normalized = draft.normalized().withPeriodId(
+      draft.periodId ?? await _openPeriodId(),
+    );
     final now = DateTime.now().toUtc();
     final expense = Expense(
       id: _uuid.v4(),
@@ -69,6 +69,7 @@ final class DriftExpenseRepository implements ExpenseRepository {
       payer: normalized.payer,
       occurredAt: normalized.occurredAt,
       note: normalized.note,
+      periodId: normalized.periodId,
       version: 0,
       updatedAt: now,
       syncState: LocalSyncState.pending,
@@ -85,17 +86,21 @@ final class DriftExpenseRepository implements ExpenseRepository {
         now: now,
       );
     });
-    _localMutations.add(LocalMutationEvent(expense.id));
+    _localMutations.add(LocalMutationEvent(SyncEntityType.expense, expense.id));
     return expense;
   }
 
   @override
   Future<Expense> edit(String id, ExpenseDraft draft) async {
-    final normalized = draft.normalized();
     final currentRow = await _database.findExpenseRow(id);
     if (currentRow == null || currentRow.deletedAt != null) {
       throw ExpenseNotFoundException(id);
     }
+    // An edit never moves an expense between periods: it keeps whichever period
+    // it was filed into, and only falls back to the open one when it has none.
+    final normalized = draft.normalized().withPeriodId(
+      currentRow.periodId ?? draft.periodId ?? await _openPeriodId(),
+    );
     final now = DateTime.now().toUtc();
     final current = expenseFromRow(currentRow);
     final updated = Expense(
@@ -105,6 +110,7 @@ final class DriftExpenseRepository implements ExpenseRepository {
       payer: normalized.payer,
       occurredAt: normalized.occurredAt,
       note: normalized.note,
+      periodId: normalized.periodId,
       version: current.version,
       updatedAt: now,
       syncState: LocalSyncState.pending,
@@ -121,7 +127,7 @@ final class DriftExpenseRepository implements ExpenseRepository {
         now: now,
       );
     });
-    _localMutations.add(LocalMutationEvent(id));
+    _localMutations.add(LocalMutationEvent(SyncEntityType.expense, id));
     return updated;
   }
 
@@ -151,8 +157,13 @@ final class DriftExpenseRepository implements ExpenseRepository {
         now: now,
       );
     });
-    _localMutations.add(LocalMutationEvent(id));
+    _localMutations.add(LocalMutationEvent(SyncEntityType.expense, id));
   }
+
+  /// The open period's id, or null before the first bootstrap delivers one — in
+  /// which case the wire payload omits it and the server picks.
+  Future<String?> _openPeriodId() async =>
+      (await _database.readOpenPeriodRow())?.id;
 
   Future<void> _enqueue({
     required String entityId,
@@ -167,6 +178,7 @@ final class DriftExpenseRepository implements ExpenseRepository {
           OutboxMutationsCompanion.insert(
             mutationId: _uuid.v4(),
             entityId: entityId,
+            entityType: Value<String>(SyncEntityType.expense.storedName),
             action: operation.storedName,
             baseVersion: baseVersion,
             payloadJson: Value<String?>(
@@ -179,21 +191,4 @@ final class DriftExpenseRepository implements ExpenseRepository {
   }
 
   Future<void> close() => _localMutations.close();
-}
-
-enum OutboxStatus { pending, inFlight, needsAttention }
-
-extension OutboxStatusStorage on OutboxStatus {
-  String get storedName => switch (this) {
-    OutboxStatus.pending => 'PENDING',
-    OutboxStatus.inFlight => 'IN_FLIGHT',
-    OutboxStatus.needsAttention => 'NEEDS_ATTENTION',
-  };
-
-  static OutboxStatus parse(String value) => switch (value) {
-    'PENDING' => OutboxStatus.pending,
-    'IN_FLIGHT' => OutboxStatus.inFlight,
-    'NEEDS_ATTENTION' => OutboxStatus.needsAttention,
-    _ => throw FormatException('Unknown outbox status: $value'),
-  };
 }
