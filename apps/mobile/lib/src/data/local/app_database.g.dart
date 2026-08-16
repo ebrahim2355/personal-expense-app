@@ -69,6 +69,17 @@ class $LocalExpensesTable extends LocalExpenses
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _periodIdMeta = const VerificationMeta(
+    'periodId',
+  );
+  @override
+  late final GeneratedColumn<String> periodId = GeneratedColumn<String>(
+    'period_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _versionMeta = const VerificationMeta(
     'version',
   );
@@ -133,6 +144,7 @@ class $LocalExpensesTable extends LocalExpenses
     payer,
     occurredAt,
     note,
+    periodId,
     version,
     updatedAt,
     deletedAt,
@@ -195,6 +207,12 @@ class $LocalExpensesTable extends LocalExpenses
       context.handle(
         _noteMeta,
         note.isAcceptableOrUnknown(data['note']!, _noteMeta),
+      );
+    }
+    if (data.containsKey('period_id')) {
+      context.handle(
+        _periodIdMeta,
+        periodId.isAcceptableOrUnknown(data['period_id']!, _periodIdMeta),
       );
     }
     if (data.containsKey('version')) {
@@ -271,6 +289,10 @@ class $LocalExpensesTable extends LocalExpenses
         DriftSqlType.string,
         data['${effectivePrefix}note'],
       ),
+      periodId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}period_id'],
+      ),
       version: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}version'],
@@ -307,6 +329,11 @@ class LocalExpenseRow extends DataClass implements Insertable<LocalExpenseRow> {
   final String payer;
   final DateTime occurredAt;
   final String? note;
+
+  /// Nullable, unlike the server column. An expense recorded before the first
+  /// bootstrap has no period to name yet; the wire payload omits it and the
+  /// server files the expense into whichever period is open.
+  final String? periodId;
   final int version;
   final DateTime updatedAt;
   final DateTime? deletedAt;
@@ -319,6 +346,7 @@ class LocalExpenseRow extends DataClass implements Insertable<LocalExpenseRow> {
     required this.payer,
     required this.occurredAt,
     this.note,
+    this.periodId,
     required this.version,
     required this.updatedAt,
     this.deletedAt,
@@ -335,6 +363,9 @@ class LocalExpenseRow extends DataClass implements Insertable<LocalExpenseRow> {
     map['occurred_at'] = Variable<DateTime>(occurredAt);
     if (!nullToAbsent || note != null) {
       map['note'] = Variable<String>(note);
+    }
+    if (!nullToAbsent || periodId != null) {
+      map['period_id'] = Variable<String>(periodId);
     }
     map['version'] = Variable<int>(version);
     map['updated_at'] = Variable<DateTime>(updatedAt);
@@ -354,6 +385,9 @@ class LocalExpenseRow extends DataClass implements Insertable<LocalExpenseRow> {
       payer: Value(payer),
       occurredAt: Value(occurredAt),
       note: note == null && nullToAbsent ? const Value.absent() : Value(note),
+      periodId: periodId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(periodId),
       version: Value(version),
       updatedAt: Value(updatedAt),
       deletedAt: deletedAt == null && nullToAbsent
@@ -376,6 +410,7 @@ class LocalExpenseRow extends DataClass implements Insertable<LocalExpenseRow> {
       payer: serializer.fromJson<String>(json['payer']),
       occurredAt: serializer.fromJson<DateTime>(json['occurredAt']),
       note: serializer.fromJson<String?>(json['note']),
+      periodId: serializer.fromJson<String?>(json['periodId']),
       version: serializer.fromJson<int>(json['version']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
       deletedAt: serializer.fromJson<DateTime?>(json['deletedAt']),
@@ -393,6 +428,7 @@ class LocalExpenseRow extends DataClass implements Insertable<LocalExpenseRow> {
       'payer': serializer.toJson<String>(payer),
       'occurredAt': serializer.toJson<DateTime>(occurredAt),
       'note': serializer.toJson<String?>(note),
+      'periodId': serializer.toJson<String?>(periodId),
       'version': serializer.toJson<int>(version),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
       'deletedAt': serializer.toJson<DateTime?>(deletedAt),
@@ -408,6 +444,7 @@ class LocalExpenseRow extends DataClass implements Insertable<LocalExpenseRow> {
     String? payer,
     DateTime? occurredAt,
     Value<String?> note = const Value.absent(),
+    Value<String?> periodId = const Value.absent(),
     int? version,
     DateTime? updatedAt,
     Value<DateTime?> deletedAt = const Value.absent(),
@@ -420,6 +457,7 @@ class LocalExpenseRow extends DataClass implements Insertable<LocalExpenseRow> {
     payer: payer ?? this.payer,
     occurredAt: occurredAt ?? this.occurredAt,
     note: note.present ? note.value : this.note,
+    periodId: periodId.present ? periodId.value : this.periodId,
     version: version ?? this.version,
     updatedAt: updatedAt ?? this.updatedAt,
     deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
@@ -438,6 +476,7 @@ class LocalExpenseRow extends DataClass implements Insertable<LocalExpenseRow> {
           ? data.occurredAt.value
           : this.occurredAt,
       note: data.note.present ? data.note.value : this.note,
+      periodId: data.periodId.present ? data.periodId.value : this.periodId,
       version: data.version.present ? data.version.value : this.version,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
@@ -457,6 +496,7 @@ class LocalExpenseRow extends DataClass implements Insertable<LocalExpenseRow> {
           ..write('payer: $payer, ')
           ..write('occurredAt: $occurredAt, ')
           ..write('note: $note, ')
+          ..write('periodId: $periodId, ')
           ..write('version: $version, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('deletedAt: $deletedAt, ')
@@ -474,6 +514,7 @@ class LocalExpenseRow extends DataClass implements Insertable<LocalExpenseRow> {
     payer,
     occurredAt,
     note,
+    periodId,
     version,
     updatedAt,
     deletedAt,
@@ -490,6 +531,7 @@ class LocalExpenseRow extends DataClass implements Insertable<LocalExpenseRow> {
           other.payer == this.payer &&
           other.occurredAt == this.occurredAt &&
           other.note == this.note &&
+          other.periodId == this.periodId &&
           other.version == this.version &&
           other.updatedAt == this.updatedAt &&
           other.deletedAt == this.deletedAt &&
@@ -504,6 +546,7 @@ class LocalExpensesCompanion extends UpdateCompanion<LocalExpenseRow> {
   final Value<String> payer;
   final Value<DateTime> occurredAt;
   final Value<String?> note;
+  final Value<String?> periodId;
   final Value<int> version;
   final Value<DateTime> updatedAt;
   final Value<DateTime?> deletedAt;
@@ -517,6 +560,7 @@ class LocalExpensesCompanion extends UpdateCompanion<LocalExpenseRow> {
     this.payer = const Value.absent(),
     this.occurredAt = const Value.absent(),
     this.note = const Value.absent(),
+    this.periodId = const Value.absent(),
     this.version = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
@@ -531,6 +575,7 @@ class LocalExpensesCompanion extends UpdateCompanion<LocalExpenseRow> {
     required String payer,
     required DateTime occurredAt,
     this.note = const Value.absent(),
+    this.periodId = const Value.absent(),
     required int version,
     required DateTime updatedAt,
     this.deletedAt = const Value.absent(),
@@ -553,6 +598,7 @@ class LocalExpensesCompanion extends UpdateCompanion<LocalExpenseRow> {
     Expression<String>? payer,
     Expression<DateTime>? occurredAt,
     Expression<String>? note,
+    Expression<String>? periodId,
     Expression<int>? version,
     Expression<DateTime>? updatedAt,
     Expression<DateTime>? deletedAt,
@@ -567,6 +613,7 @@ class LocalExpensesCompanion extends UpdateCompanion<LocalExpenseRow> {
       if (payer != null) 'payer': payer,
       if (occurredAt != null) 'occurred_at': occurredAt,
       if (note != null) 'note': note,
+      if (periodId != null) 'period_id': periodId,
       if (version != null) 'version': version,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (deletedAt != null) 'deleted_at': deletedAt,
@@ -583,6 +630,7 @@ class LocalExpensesCompanion extends UpdateCompanion<LocalExpenseRow> {
     Value<String>? payer,
     Value<DateTime>? occurredAt,
     Value<String?>? note,
+    Value<String?>? periodId,
     Value<int>? version,
     Value<DateTime>? updatedAt,
     Value<DateTime?>? deletedAt,
@@ -597,6 +645,7 @@ class LocalExpensesCompanion extends UpdateCompanion<LocalExpenseRow> {
       payer: payer ?? this.payer,
       occurredAt: occurredAt ?? this.occurredAt,
       note: note ?? this.note,
+      periodId: periodId ?? this.periodId,
       version: version ?? this.version,
       updatedAt: updatedAt ?? this.updatedAt,
       deletedAt: deletedAt ?? this.deletedAt,
@@ -627,6 +676,9 @@ class LocalExpensesCompanion extends UpdateCompanion<LocalExpenseRow> {
     if (note.present) {
       map['note'] = Variable<String>(note.value);
     }
+    if (periodId.present) {
+      map['period_id'] = Variable<String>(periodId.value);
+    }
     if (version.present) {
       map['version'] = Variable<int>(version.value);
     }
@@ -655,6 +707,1193 @@ class LocalExpensesCompanion extends UpdateCompanion<LocalExpenseRow> {
           ..write('amountMinor: $amountMinor, ')
           ..write('category: $category, ')
           ..write('payer: $payer, ')
+          ..write('occurredAt: $occurredAt, ')
+          ..write('note: $note, ')
+          ..write('periodId: $periodId, ')
+          ..write('version: $version, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('deletedAt: $deletedAt, ')
+          ..write('syncState: $syncState, ')
+          ..write('localModifiedAt: $localModifiedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $LocalPeriodsTable extends LocalPeriods
+    with TableInfo<$LocalPeriodsTable, LocalPeriodRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalPeriodsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sequenceNumberMeta = const VerificationMeta(
+    'sequenceNumber',
+  );
+  @override
+  late final GeneratedColumn<int> sequenceNumber = GeneratedColumn<int>(
+    'sequence_number',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _startedAtMeta = const VerificationMeta(
+    'startedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> startedAt = GeneratedColumn<DateTime>(
+    'started_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _closedAtMeta = const VerificationMeta(
+    'closedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> closedAt = GeneratedColumn<DateTime>(
+    'closed_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _noteMeta = const VerificationMeta('note');
+  @override
+  late final GeneratedColumn<String> note = GeneratedColumn<String>(
+    'note',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _versionMeta = const VerificationMeta(
+    'version',
+  );
+  @override
+  late final GeneratedColumn<int> version = GeneratedColumn<int>(
+    'version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _syncStateMeta = const VerificationMeta(
+    'syncState',
+  );
+  @override
+  late final GeneratedColumn<String> syncState = GeneratedColumn<String>(
+    'sync_state',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _localModifiedAtMeta = const VerificationMeta(
+    'localModifiedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> localModifiedAt =
+      GeneratedColumn<DateTime>(
+        'local_modified_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: true,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    sequenceNumber,
+    startedAt,
+    closedAt,
+    note,
+    version,
+    updatedAt,
+    syncState,
+    localModifiedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_periods';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<LocalPeriodRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('sequence_number')) {
+      context.handle(
+        _sequenceNumberMeta,
+        sequenceNumber.isAcceptableOrUnknown(
+          data['sequence_number']!,
+          _sequenceNumberMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_sequenceNumberMeta);
+    }
+    if (data.containsKey('started_at')) {
+      context.handle(
+        _startedAtMeta,
+        startedAt.isAcceptableOrUnknown(data['started_at']!, _startedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_startedAtMeta);
+    }
+    if (data.containsKey('closed_at')) {
+      context.handle(
+        _closedAtMeta,
+        closedAt.isAcceptableOrUnknown(data['closed_at']!, _closedAtMeta),
+      );
+    }
+    if (data.containsKey('note')) {
+      context.handle(
+        _noteMeta,
+        note.isAcceptableOrUnknown(data['note']!, _noteMeta),
+      );
+    }
+    if (data.containsKey('version')) {
+      context.handle(
+        _versionMeta,
+        version.isAcceptableOrUnknown(data['version']!, _versionMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_versionMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    if (data.containsKey('sync_state')) {
+      context.handle(
+        _syncStateMeta,
+        syncState.isAcceptableOrUnknown(data['sync_state']!, _syncStateMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_syncStateMeta);
+    }
+    if (data.containsKey('local_modified_at')) {
+      context.handle(
+        _localModifiedAtMeta,
+        localModifiedAt.isAcceptableOrUnknown(
+          data['local_modified_at']!,
+          _localModifiedAtMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_localModifiedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  LocalPeriodRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalPeriodRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      sequenceNumber: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}sequence_number'],
+      )!,
+      startedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}started_at'],
+      )!,
+      closedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}closed_at'],
+      ),
+      note: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}note'],
+      ),
+      version: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}version'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+      syncState: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}sync_state'],
+      )!,
+      localModifiedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}local_modified_at'],
+      )!,
+    );
+  }
+
+  @override
+  $LocalPeriodsTable createAlias(String alias) {
+    return $LocalPeriodsTable(attachedDatabase, alias);
+  }
+}
+
+class LocalPeriodRow extends DataClass implements Insertable<LocalPeriodRow> {
+  final String id;
+  final int sequenceNumber;
+  final DateTime startedAt;
+  final DateTime? closedAt;
+  final String? note;
+  final int version;
+  final DateTime updatedAt;
+  final String syncState;
+  final DateTime localModifiedAt;
+  const LocalPeriodRow({
+    required this.id,
+    required this.sequenceNumber,
+    required this.startedAt,
+    this.closedAt,
+    this.note,
+    required this.version,
+    required this.updatedAt,
+    required this.syncState,
+    required this.localModifiedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['sequence_number'] = Variable<int>(sequenceNumber);
+    map['started_at'] = Variable<DateTime>(startedAt);
+    if (!nullToAbsent || closedAt != null) {
+      map['closed_at'] = Variable<DateTime>(closedAt);
+    }
+    if (!nullToAbsent || note != null) {
+      map['note'] = Variable<String>(note);
+    }
+    map['version'] = Variable<int>(version);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    map['sync_state'] = Variable<String>(syncState);
+    map['local_modified_at'] = Variable<DateTime>(localModifiedAt);
+    return map;
+  }
+
+  LocalPeriodsCompanion toCompanion(bool nullToAbsent) {
+    return LocalPeriodsCompanion(
+      id: Value(id),
+      sequenceNumber: Value(sequenceNumber),
+      startedAt: Value(startedAt),
+      closedAt: closedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(closedAt),
+      note: note == null && nullToAbsent ? const Value.absent() : Value(note),
+      version: Value(version),
+      updatedAt: Value(updatedAt),
+      syncState: Value(syncState),
+      localModifiedAt: Value(localModifiedAt),
+    );
+  }
+
+  factory LocalPeriodRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalPeriodRow(
+      id: serializer.fromJson<String>(json['id']),
+      sequenceNumber: serializer.fromJson<int>(json['sequenceNumber']),
+      startedAt: serializer.fromJson<DateTime>(json['startedAt']),
+      closedAt: serializer.fromJson<DateTime?>(json['closedAt']),
+      note: serializer.fromJson<String?>(json['note']),
+      version: serializer.fromJson<int>(json['version']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+      syncState: serializer.fromJson<String>(json['syncState']),
+      localModifiedAt: serializer.fromJson<DateTime>(json['localModifiedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'sequenceNumber': serializer.toJson<int>(sequenceNumber),
+      'startedAt': serializer.toJson<DateTime>(startedAt),
+      'closedAt': serializer.toJson<DateTime?>(closedAt),
+      'note': serializer.toJson<String?>(note),
+      'version': serializer.toJson<int>(version),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+      'syncState': serializer.toJson<String>(syncState),
+      'localModifiedAt': serializer.toJson<DateTime>(localModifiedAt),
+    };
+  }
+
+  LocalPeriodRow copyWith({
+    String? id,
+    int? sequenceNumber,
+    DateTime? startedAt,
+    Value<DateTime?> closedAt = const Value.absent(),
+    Value<String?> note = const Value.absent(),
+    int? version,
+    DateTime? updatedAt,
+    String? syncState,
+    DateTime? localModifiedAt,
+  }) => LocalPeriodRow(
+    id: id ?? this.id,
+    sequenceNumber: sequenceNumber ?? this.sequenceNumber,
+    startedAt: startedAt ?? this.startedAt,
+    closedAt: closedAt.present ? closedAt.value : this.closedAt,
+    note: note.present ? note.value : this.note,
+    version: version ?? this.version,
+    updatedAt: updatedAt ?? this.updatedAt,
+    syncState: syncState ?? this.syncState,
+    localModifiedAt: localModifiedAt ?? this.localModifiedAt,
+  );
+  LocalPeriodRow copyWithCompanion(LocalPeriodsCompanion data) {
+    return LocalPeriodRow(
+      id: data.id.present ? data.id.value : this.id,
+      sequenceNumber: data.sequenceNumber.present
+          ? data.sequenceNumber.value
+          : this.sequenceNumber,
+      startedAt: data.startedAt.present ? data.startedAt.value : this.startedAt,
+      closedAt: data.closedAt.present ? data.closedAt.value : this.closedAt,
+      note: data.note.present ? data.note.value : this.note,
+      version: data.version.present ? data.version.value : this.version,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      syncState: data.syncState.present ? data.syncState.value : this.syncState,
+      localModifiedAt: data.localModifiedAt.present
+          ? data.localModifiedAt.value
+          : this.localModifiedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalPeriodRow(')
+          ..write('id: $id, ')
+          ..write('sequenceNumber: $sequenceNumber, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('closedAt: $closedAt, ')
+          ..write('note: $note, ')
+          ..write('version: $version, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('syncState: $syncState, ')
+          ..write('localModifiedAt: $localModifiedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    sequenceNumber,
+    startedAt,
+    closedAt,
+    note,
+    version,
+    updatedAt,
+    syncState,
+    localModifiedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalPeriodRow &&
+          other.id == this.id &&
+          other.sequenceNumber == this.sequenceNumber &&
+          other.startedAt == this.startedAt &&
+          other.closedAt == this.closedAt &&
+          other.note == this.note &&
+          other.version == this.version &&
+          other.updatedAt == this.updatedAt &&
+          other.syncState == this.syncState &&
+          other.localModifiedAt == this.localModifiedAt);
+}
+
+class LocalPeriodsCompanion extends UpdateCompanion<LocalPeriodRow> {
+  final Value<String> id;
+  final Value<int> sequenceNumber;
+  final Value<DateTime> startedAt;
+  final Value<DateTime?> closedAt;
+  final Value<String?> note;
+  final Value<int> version;
+  final Value<DateTime> updatedAt;
+  final Value<String> syncState;
+  final Value<DateTime> localModifiedAt;
+  final Value<int> rowid;
+  const LocalPeriodsCompanion({
+    this.id = const Value.absent(),
+    this.sequenceNumber = const Value.absent(),
+    this.startedAt = const Value.absent(),
+    this.closedAt = const Value.absent(),
+    this.note = const Value.absent(),
+    this.version = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.syncState = const Value.absent(),
+    this.localModifiedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalPeriodsCompanion.insert({
+    required String id,
+    required int sequenceNumber,
+    required DateTime startedAt,
+    this.closedAt = const Value.absent(),
+    this.note = const Value.absent(),
+    required int version,
+    required DateTime updatedAt,
+    required String syncState,
+    required DateTime localModifiedAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       sequenceNumber = Value(sequenceNumber),
+       startedAt = Value(startedAt),
+       version = Value(version),
+       updatedAt = Value(updatedAt),
+       syncState = Value(syncState),
+       localModifiedAt = Value(localModifiedAt);
+  static Insertable<LocalPeriodRow> custom({
+    Expression<String>? id,
+    Expression<int>? sequenceNumber,
+    Expression<DateTime>? startedAt,
+    Expression<DateTime>? closedAt,
+    Expression<String>? note,
+    Expression<int>? version,
+    Expression<DateTime>? updatedAt,
+    Expression<String>? syncState,
+    Expression<DateTime>? localModifiedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (sequenceNumber != null) 'sequence_number': sequenceNumber,
+      if (startedAt != null) 'started_at': startedAt,
+      if (closedAt != null) 'closed_at': closedAt,
+      if (note != null) 'note': note,
+      if (version != null) 'version': version,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (syncState != null) 'sync_state': syncState,
+      if (localModifiedAt != null) 'local_modified_at': localModifiedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalPeriodsCompanion copyWith({
+    Value<String>? id,
+    Value<int>? sequenceNumber,
+    Value<DateTime>? startedAt,
+    Value<DateTime?>? closedAt,
+    Value<String?>? note,
+    Value<int>? version,
+    Value<DateTime>? updatedAt,
+    Value<String>? syncState,
+    Value<DateTime>? localModifiedAt,
+    Value<int>? rowid,
+  }) {
+    return LocalPeriodsCompanion(
+      id: id ?? this.id,
+      sequenceNumber: sequenceNumber ?? this.sequenceNumber,
+      startedAt: startedAt ?? this.startedAt,
+      closedAt: closedAt ?? this.closedAt,
+      note: note ?? this.note,
+      version: version ?? this.version,
+      updatedAt: updatedAt ?? this.updatedAt,
+      syncState: syncState ?? this.syncState,
+      localModifiedAt: localModifiedAt ?? this.localModifiedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (sequenceNumber.present) {
+      map['sequence_number'] = Variable<int>(sequenceNumber.value);
+    }
+    if (startedAt.present) {
+      map['started_at'] = Variable<DateTime>(startedAt.value);
+    }
+    if (closedAt.present) {
+      map['closed_at'] = Variable<DateTime>(closedAt.value);
+    }
+    if (note.present) {
+      map['note'] = Variable<String>(note.value);
+    }
+    if (version.present) {
+      map['version'] = Variable<int>(version.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (syncState.present) {
+      map['sync_state'] = Variable<String>(syncState.value);
+    }
+    if (localModifiedAt.present) {
+      map['local_modified_at'] = Variable<DateTime>(localModifiedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalPeriodsCompanion(')
+          ..write('id: $id, ')
+          ..write('sequenceNumber: $sequenceNumber, ')
+          ..write('startedAt: $startedAt, ')
+          ..write('closedAt: $closedAt, ')
+          ..write('note: $note, ')
+          ..write('version: $version, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('syncState: $syncState, ')
+          ..write('localModifiedAt: $localModifiedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $LocalLoansTable extends LocalLoans
+    with TableInfo<$LocalLoansTable, LocalLoanRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalLoansTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _debtorMeta = const VerificationMeta('debtor');
+  @override
+  late final GeneratedColumn<String> debtor = GeneratedColumn<String>(
+    'debtor',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _amountMinorMeta = const VerificationMeta(
+    'amountMinor',
+  );
+  @override
+  late final GeneratedColumn<int> amountMinor = GeneratedColumn<int>(
+    'amount_minor',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _occurredAtMeta = const VerificationMeta(
+    'occurredAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> occurredAt = GeneratedColumn<DateTime>(
+    'occurred_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _noteMeta = const VerificationMeta('note');
+  @override
+  late final GeneratedColumn<String> note = GeneratedColumn<String>(
+    'note',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _versionMeta = const VerificationMeta(
+    'version',
+  );
+  @override
+  late final GeneratedColumn<int> version = GeneratedColumn<int>(
+    'version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _deletedAtMeta = const VerificationMeta(
+    'deletedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> deletedAt = GeneratedColumn<DateTime>(
+    'deleted_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _syncStateMeta = const VerificationMeta(
+    'syncState',
+  );
+  @override
+  late final GeneratedColumn<String> syncState = GeneratedColumn<String>(
+    'sync_state',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _localModifiedAtMeta = const VerificationMeta(
+    'localModifiedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> localModifiedAt =
+      GeneratedColumn<DateTime>(
+        'local_modified_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: true,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    debtor,
+    amountMinor,
+    occurredAt,
+    note,
+    version,
+    updatedAt,
+    deletedAt,
+    syncState,
+    localModifiedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_loans';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<LocalLoanRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('debtor')) {
+      context.handle(
+        _debtorMeta,
+        debtor.isAcceptableOrUnknown(data['debtor']!, _debtorMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_debtorMeta);
+    }
+    if (data.containsKey('amount_minor')) {
+      context.handle(
+        _amountMinorMeta,
+        amountMinor.isAcceptableOrUnknown(
+          data['amount_minor']!,
+          _amountMinorMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_amountMinorMeta);
+    }
+    if (data.containsKey('occurred_at')) {
+      context.handle(
+        _occurredAtMeta,
+        occurredAt.isAcceptableOrUnknown(data['occurred_at']!, _occurredAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_occurredAtMeta);
+    }
+    if (data.containsKey('note')) {
+      context.handle(
+        _noteMeta,
+        note.isAcceptableOrUnknown(data['note']!, _noteMeta),
+      );
+    }
+    if (data.containsKey('version')) {
+      context.handle(
+        _versionMeta,
+        version.isAcceptableOrUnknown(data['version']!, _versionMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_versionMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    if (data.containsKey('deleted_at')) {
+      context.handle(
+        _deletedAtMeta,
+        deletedAt.isAcceptableOrUnknown(data['deleted_at']!, _deletedAtMeta),
+      );
+    }
+    if (data.containsKey('sync_state')) {
+      context.handle(
+        _syncStateMeta,
+        syncState.isAcceptableOrUnknown(data['sync_state']!, _syncStateMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_syncStateMeta);
+    }
+    if (data.containsKey('local_modified_at')) {
+      context.handle(
+        _localModifiedAtMeta,
+        localModifiedAt.isAcceptableOrUnknown(
+          data['local_modified_at']!,
+          _localModifiedAtMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_localModifiedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  LocalLoanRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalLoanRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      debtor: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}debtor'],
+      )!,
+      amountMinor: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}amount_minor'],
+      )!,
+      occurredAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}occurred_at'],
+      )!,
+      note: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}note'],
+      ),
+      version: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}version'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+      deletedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}deleted_at'],
+      ),
+      syncState: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}sync_state'],
+      )!,
+      localModifiedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}local_modified_at'],
+      )!,
+    );
+  }
+
+  @override
+  $LocalLoansTable createAlias(String alias) {
+    return $LocalLoansTable(attachedDatabase, alias);
+  }
+}
+
+class LocalLoanRow extends DataClass implements Insertable<LocalLoanRow> {
+  final String id;
+  final String debtor;
+  final int amountMinor;
+  final DateTime occurredAt;
+  final String? note;
+  final int version;
+  final DateTime updatedAt;
+  final DateTime? deletedAt;
+  final String syncState;
+  final DateTime localModifiedAt;
+  const LocalLoanRow({
+    required this.id,
+    required this.debtor,
+    required this.amountMinor,
+    required this.occurredAt,
+    this.note,
+    required this.version,
+    required this.updatedAt,
+    this.deletedAt,
+    required this.syncState,
+    required this.localModifiedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['debtor'] = Variable<String>(debtor);
+    map['amount_minor'] = Variable<int>(amountMinor);
+    map['occurred_at'] = Variable<DateTime>(occurredAt);
+    if (!nullToAbsent || note != null) {
+      map['note'] = Variable<String>(note);
+    }
+    map['version'] = Variable<int>(version);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    if (!nullToAbsent || deletedAt != null) {
+      map['deleted_at'] = Variable<DateTime>(deletedAt);
+    }
+    map['sync_state'] = Variable<String>(syncState);
+    map['local_modified_at'] = Variable<DateTime>(localModifiedAt);
+    return map;
+  }
+
+  LocalLoansCompanion toCompanion(bool nullToAbsent) {
+    return LocalLoansCompanion(
+      id: Value(id),
+      debtor: Value(debtor),
+      amountMinor: Value(amountMinor),
+      occurredAt: Value(occurredAt),
+      note: note == null && nullToAbsent ? const Value.absent() : Value(note),
+      version: Value(version),
+      updatedAt: Value(updatedAt),
+      deletedAt: deletedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(deletedAt),
+      syncState: Value(syncState),
+      localModifiedAt: Value(localModifiedAt),
+    );
+  }
+
+  factory LocalLoanRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalLoanRow(
+      id: serializer.fromJson<String>(json['id']),
+      debtor: serializer.fromJson<String>(json['debtor']),
+      amountMinor: serializer.fromJson<int>(json['amountMinor']),
+      occurredAt: serializer.fromJson<DateTime>(json['occurredAt']),
+      note: serializer.fromJson<String?>(json['note']),
+      version: serializer.fromJson<int>(json['version']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+      deletedAt: serializer.fromJson<DateTime?>(json['deletedAt']),
+      syncState: serializer.fromJson<String>(json['syncState']),
+      localModifiedAt: serializer.fromJson<DateTime>(json['localModifiedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'debtor': serializer.toJson<String>(debtor),
+      'amountMinor': serializer.toJson<int>(amountMinor),
+      'occurredAt': serializer.toJson<DateTime>(occurredAt),
+      'note': serializer.toJson<String?>(note),
+      'version': serializer.toJson<int>(version),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+      'deletedAt': serializer.toJson<DateTime?>(deletedAt),
+      'syncState': serializer.toJson<String>(syncState),
+      'localModifiedAt': serializer.toJson<DateTime>(localModifiedAt),
+    };
+  }
+
+  LocalLoanRow copyWith({
+    String? id,
+    String? debtor,
+    int? amountMinor,
+    DateTime? occurredAt,
+    Value<String?> note = const Value.absent(),
+    int? version,
+    DateTime? updatedAt,
+    Value<DateTime?> deletedAt = const Value.absent(),
+    String? syncState,
+    DateTime? localModifiedAt,
+  }) => LocalLoanRow(
+    id: id ?? this.id,
+    debtor: debtor ?? this.debtor,
+    amountMinor: amountMinor ?? this.amountMinor,
+    occurredAt: occurredAt ?? this.occurredAt,
+    note: note.present ? note.value : this.note,
+    version: version ?? this.version,
+    updatedAt: updatedAt ?? this.updatedAt,
+    deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
+    syncState: syncState ?? this.syncState,
+    localModifiedAt: localModifiedAt ?? this.localModifiedAt,
+  );
+  LocalLoanRow copyWithCompanion(LocalLoansCompanion data) {
+    return LocalLoanRow(
+      id: data.id.present ? data.id.value : this.id,
+      debtor: data.debtor.present ? data.debtor.value : this.debtor,
+      amountMinor: data.amountMinor.present
+          ? data.amountMinor.value
+          : this.amountMinor,
+      occurredAt: data.occurredAt.present
+          ? data.occurredAt.value
+          : this.occurredAt,
+      note: data.note.present ? data.note.value : this.note,
+      version: data.version.present ? data.version.value : this.version,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+      deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
+      syncState: data.syncState.present ? data.syncState.value : this.syncState,
+      localModifiedAt: data.localModifiedAt.present
+          ? data.localModifiedAt.value
+          : this.localModifiedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalLoanRow(')
+          ..write('id: $id, ')
+          ..write('debtor: $debtor, ')
+          ..write('amountMinor: $amountMinor, ')
+          ..write('occurredAt: $occurredAt, ')
+          ..write('note: $note, ')
+          ..write('version: $version, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('deletedAt: $deletedAt, ')
+          ..write('syncState: $syncState, ')
+          ..write('localModifiedAt: $localModifiedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    debtor,
+    amountMinor,
+    occurredAt,
+    note,
+    version,
+    updatedAt,
+    deletedAt,
+    syncState,
+    localModifiedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalLoanRow &&
+          other.id == this.id &&
+          other.debtor == this.debtor &&
+          other.amountMinor == this.amountMinor &&
+          other.occurredAt == this.occurredAt &&
+          other.note == this.note &&
+          other.version == this.version &&
+          other.updatedAt == this.updatedAt &&
+          other.deletedAt == this.deletedAt &&
+          other.syncState == this.syncState &&
+          other.localModifiedAt == this.localModifiedAt);
+}
+
+class LocalLoansCompanion extends UpdateCompanion<LocalLoanRow> {
+  final Value<String> id;
+  final Value<String> debtor;
+  final Value<int> amountMinor;
+  final Value<DateTime> occurredAt;
+  final Value<String?> note;
+  final Value<int> version;
+  final Value<DateTime> updatedAt;
+  final Value<DateTime?> deletedAt;
+  final Value<String> syncState;
+  final Value<DateTime> localModifiedAt;
+  final Value<int> rowid;
+  const LocalLoansCompanion({
+    this.id = const Value.absent(),
+    this.debtor = const Value.absent(),
+    this.amountMinor = const Value.absent(),
+    this.occurredAt = const Value.absent(),
+    this.note = const Value.absent(),
+    this.version = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.deletedAt = const Value.absent(),
+    this.syncState = const Value.absent(),
+    this.localModifiedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalLoansCompanion.insert({
+    required String id,
+    required String debtor,
+    required int amountMinor,
+    required DateTime occurredAt,
+    this.note = const Value.absent(),
+    required int version,
+    required DateTime updatedAt,
+    this.deletedAt = const Value.absent(),
+    required String syncState,
+    required DateTime localModifiedAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       debtor = Value(debtor),
+       amountMinor = Value(amountMinor),
+       occurredAt = Value(occurredAt),
+       version = Value(version),
+       updatedAt = Value(updatedAt),
+       syncState = Value(syncState),
+       localModifiedAt = Value(localModifiedAt);
+  static Insertable<LocalLoanRow> custom({
+    Expression<String>? id,
+    Expression<String>? debtor,
+    Expression<int>? amountMinor,
+    Expression<DateTime>? occurredAt,
+    Expression<String>? note,
+    Expression<int>? version,
+    Expression<DateTime>? updatedAt,
+    Expression<DateTime>? deletedAt,
+    Expression<String>? syncState,
+    Expression<DateTime>? localModifiedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (debtor != null) 'debtor': debtor,
+      if (amountMinor != null) 'amount_minor': amountMinor,
+      if (occurredAt != null) 'occurred_at': occurredAt,
+      if (note != null) 'note': note,
+      if (version != null) 'version': version,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (deletedAt != null) 'deleted_at': deletedAt,
+      if (syncState != null) 'sync_state': syncState,
+      if (localModifiedAt != null) 'local_modified_at': localModifiedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalLoansCompanion copyWith({
+    Value<String>? id,
+    Value<String>? debtor,
+    Value<int>? amountMinor,
+    Value<DateTime>? occurredAt,
+    Value<String?>? note,
+    Value<int>? version,
+    Value<DateTime>? updatedAt,
+    Value<DateTime?>? deletedAt,
+    Value<String>? syncState,
+    Value<DateTime>? localModifiedAt,
+    Value<int>? rowid,
+  }) {
+    return LocalLoansCompanion(
+      id: id ?? this.id,
+      debtor: debtor ?? this.debtor,
+      amountMinor: amountMinor ?? this.amountMinor,
+      occurredAt: occurredAt ?? this.occurredAt,
+      note: note ?? this.note,
+      version: version ?? this.version,
+      updatedAt: updatedAt ?? this.updatedAt,
+      deletedAt: deletedAt ?? this.deletedAt,
+      syncState: syncState ?? this.syncState,
+      localModifiedAt: localModifiedAt ?? this.localModifiedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (debtor.present) {
+      map['debtor'] = Variable<String>(debtor.value);
+    }
+    if (amountMinor.present) {
+      map['amount_minor'] = Variable<int>(amountMinor.value);
+    }
+    if (occurredAt.present) {
+      map['occurred_at'] = Variable<DateTime>(occurredAt.value);
+    }
+    if (note.present) {
+      map['note'] = Variable<String>(note.value);
+    }
+    if (version.present) {
+      map['version'] = Variable<int>(version.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (deletedAt.present) {
+      map['deleted_at'] = Variable<DateTime>(deletedAt.value);
+    }
+    if (syncState.present) {
+      map['sync_state'] = Variable<String>(syncState.value);
+    }
+    if (localModifiedAt.present) {
+      map['local_modified_at'] = Variable<DateTime>(localModifiedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalLoansCompanion(')
+          ..write('id: $id, ')
+          ..write('debtor: $debtor, ')
+          ..write('amountMinor: $amountMinor, ')
           ..write('occurredAt: $occurredAt, ')
           ..write('note: $note, ')
           ..write('version: $version, ')
@@ -711,6 +1950,18 @@ class $OutboxMutationsTable extends OutboxMutations
     false,
     type: DriftSqlType.string,
     requiredDuringInsert: true,
+  );
+  static const VerificationMeta _entityTypeMeta = const VerificationMeta(
+    'entityType',
+  );
+  @override
+  late final GeneratedColumn<String> entityType = GeneratedColumn<String>(
+    'entity_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant<String>('EXPENSE'),
   );
   static const VerificationMeta _actionMeta = const VerificationMeta('action');
   @override
@@ -815,6 +2066,7 @@ class $OutboxMutationsTable extends OutboxMutations
     localSequence,
     mutationId,
     entityId,
+    entityType,
     action,
     baseVersion,
     payloadJson,
@@ -861,6 +2113,12 @@ class $OutboxMutationsTable extends OutboxMutations
       );
     } else if (isInserting) {
       context.missing(_entityIdMeta);
+    }
+    if (data.containsKey('entity_type')) {
+      context.handle(
+        _entityTypeMeta,
+        entityType.isAcceptableOrUnknown(data['entity_type']!, _entityTypeMeta),
+      );
     }
     if (data.containsKey('action')) {
       context.handle(
@@ -963,6 +2221,10 @@ class $OutboxMutationsTable extends OutboxMutations
         DriftSqlType.string,
         data['${effectivePrefix}entity_id'],
       )!,
+      entityType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entity_type'],
+      )!,
       action: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}action'],
@@ -1013,6 +2275,10 @@ class OutboxMutationRow extends DataClass
   final int localSequence;
   final String mutationId;
   final String entityId;
+
+  /// Which table [entityId] points at. Defaulted so rows queued by an older
+  /// build, when the outbox only ever carried expenses, still replay correctly.
+  final String entityType;
   final String action;
   final int baseVersion;
   final String? payloadJson;
@@ -1026,6 +2292,7 @@ class OutboxMutationRow extends DataClass
     required this.localSequence,
     required this.mutationId,
     required this.entityId,
+    required this.entityType,
     required this.action,
     required this.baseVersion,
     this.payloadJson,
@@ -1042,6 +2309,7 @@ class OutboxMutationRow extends DataClass
     map['local_sequence'] = Variable<int>(localSequence);
     map['mutation_id'] = Variable<String>(mutationId);
     map['entity_id'] = Variable<String>(entityId);
+    map['entity_type'] = Variable<String>(entityType);
     map['action'] = Variable<String>(action);
     map['base_version'] = Variable<int>(baseVersion);
     if (!nullToAbsent || payloadJson != null) {
@@ -1067,6 +2335,7 @@ class OutboxMutationRow extends DataClass
       localSequence: Value(localSequence),
       mutationId: Value(mutationId),
       entityId: Value(entityId),
+      entityType: Value(entityType),
       action: Value(action),
       baseVersion: Value(baseVersion),
       payloadJson: payloadJson == null && nullToAbsent
@@ -1096,6 +2365,7 @@ class OutboxMutationRow extends DataClass
       localSequence: serializer.fromJson<int>(json['localSequence']),
       mutationId: serializer.fromJson<String>(json['mutationId']),
       entityId: serializer.fromJson<String>(json['entityId']),
+      entityType: serializer.fromJson<String>(json['entityType']),
       action: serializer.fromJson<String>(json['action']),
       baseVersion: serializer.fromJson<int>(json['baseVersion']),
       payloadJson: serializer.fromJson<String?>(json['payloadJson']),
@@ -1114,6 +2384,7 @@ class OutboxMutationRow extends DataClass
       'localSequence': serializer.toJson<int>(localSequence),
       'mutationId': serializer.toJson<String>(mutationId),
       'entityId': serializer.toJson<String>(entityId),
+      'entityType': serializer.toJson<String>(entityType),
       'action': serializer.toJson<String>(action),
       'baseVersion': serializer.toJson<int>(baseVersion),
       'payloadJson': serializer.toJson<String?>(payloadJson),
@@ -1130,6 +2401,7 @@ class OutboxMutationRow extends DataClass
     int? localSequence,
     String? mutationId,
     String? entityId,
+    String? entityType,
     String? action,
     int? baseVersion,
     Value<String?> payloadJson = const Value.absent(),
@@ -1143,6 +2415,7 @@ class OutboxMutationRow extends DataClass
     localSequence: localSequence ?? this.localSequence,
     mutationId: mutationId ?? this.mutationId,
     entityId: entityId ?? this.entityId,
+    entityType: entityType ?? this.entityType,
     action: action ?? this.action,
     baseVersion: baseVersion ?? this.baseVersion,
     payloadJson: payloadJson.present ? payloadJson.value : this.payloadJson,
@@ -1168,6 +2441,9 @@ class OutboxMutationRow extends DataClass
           ? data.mutationId.value
           : this.mutationId,
       entityId: data.entityId.present ? data.entityId.value : this.entityId,
+      entityType: data.entityType.present
+          ? data.entityType.value
+          : this.entityType,
       action: data.action.present ? data.action.value : this.action,
       baseVersion: data.baseVersion.present
           ? data.baseVersion.value
@@ -1198,6 +2474,7 @@ class OutboxMutationRow extends DataClass
           ..write('localSequence: $localSequence, ')
           ..write('mutationId: $mutationId, ')
           ..write('entityId: $entityId, ')
+          ..write('entityType: $entityType, ')
           ..write('action: $action, ')
           ..write('baseVersion: $baseVersion, ')
           ..write('payloadJson: $payloadJson, ')
@@ -1216,6 +2493,7 @@ class OutboxMutationRow extends DataClass
     localSequence,
     mutationId,
     entityId,
+    entityType,
     action,
     baseVersion,
     payloadJson,
@@ -1233,6 +2511,7 @@ class OutboxMutationRow extends DataClass
           other.localSequence == this.localSequence &&
           other.mutationId == this.mutationId &&
           other.entityId == this.entityId &&
+          other.entityType == this.entityType &&
           other.action == this.action &&
           other.baseVersion == this.baseVersion &&
           other.payloadJson == this.payloadJson &&
@@ -1248,6 +2527,7 @@ class OutboxMutationsCompanion extends UpdateCompanion<OutboxMutationRow> {
   final Value<int> localSequence;
   final Value<String> mutationId;
   final Value<String> entityId;
+  final Value<String> entityType;
   final Value<String> action;
   final Value<int> baseVersion;
   final Value<String?> payloadJson;
@@ -1261,6 +2541,7 @@ class OutboxMutationsCompanion extends UpdateCompanion<OutboxMutationRow> {
     this.localSequence = const Value.absent(),
     this.mutationId = const Value.absent(),
     this.entityId = const Value.absent(),
+    this.entityType = const Value.absent(),
     this.action = const Value.absent(),
     this.baseVersion = const Value.absent(),
     this.payloadJson = const Value.absent(),
@@ -1275,6 +2556,7 @@ class OutboxMutationsCompanion extends UpdateCompanion<OutboxMutationRow> {
     this.localSequence = const Value.absent(),
     required String mutationId,
     required String entityId,
+    this.entityType = const Value.absent(),
     required String action,
     required int baseVersion,
     this.payloadJson = const Value.absent(),
@@ -1294,6 +2576,7 @@ class OutboxMutationsCompanion extends UpdateCompanion<OutboxMutationRow> {
     Expression<int>? localSequence,
     Expression<String>? mutationId,
     Expression<String>? entityId,
+    Expression<String>? entityType,
     Expression<String>? action,
     Expression<int>? baseVersion,
     Expression<String>? payloadJson,
@@ -1308,6 +2591,7 @@ class OutboxMutationsCompanion extends UpdateCompanion<OutboxMutationRow> {
       if (localSequence != null) 'local_sequence': localSequence,
       if (mutationId != null) 'mutation_id': mutationId,
       if (entityId != null) 'entity_id': entityId,
+      if (entityType != null) 'entity_type': entityType,
       if (action != null) 'action': action,
       if (baseVersion != null) 'base_version': baseVersion,
       if (payloadJson != null) 'payload_json': payloadJson,
@@ -1324,6 +2608,7 @@ class OutboxMutationsCompanion extends UpdateCompanion<OutboxMutationRow> {
     Value<int>? localSequence,
     Value<String>? mutationId,
     Value<String>? entityId,
+    Value<String>? entityType,
     Value<String>? action,
     Value<int>? baseVersion,
     Value<String?>? payloadJson,
@@ -1338,6 +2623,7 @@ class OutboxMutationsCompanion extends UpdateCompanion<OutboxMutationRow> {
       localSequence: localSequence ?? this.localSequence,
       mutationId: mutationId ?? this.mutationId,
       entityId: entityId ?? this.entityId,
+      entityType: entityType ?? this.entityType,
       action: action ?? this.action,
       baseVersion: baseVersion ?? this.baseVersion,
       payloadJson: payloadJson ?? this.payloadJson,
@@ -1361,6 +2647,9 @@ class OutboxMutationsCompanion extends UpdateCompanion<OutboxMutationRow> {
     }
     if (entityId.present) {
       map['entity_id'] = Variable<String>(entityId.value);
+    }
+    if (entityType.present) {
+      map['entity_type'] = Variable<String>(entityType.value);
     }
     if (action.present) {
       map['action'] = Variable<String>(action.value);
@@ -1398,6 +2687,7 @@ class OutboxMutationsCompanion extends UpdateCompanion<OutboxMutationRow> {
           ..write('localSequence: $localSequence, ')
           ..write('mutationId: $mutationId, ')
           ..write('entityId: $entityId, ')
+          ..write('entityType: $entityType, ')
           ..write('action: $action, ')
           ..write('baseVersion: $baseVersion, ')
           ..write('payloadJson: $payloadJson, ')
@@ -2019,6 +3309,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
   late final $LocalExpensesTable localExpenses = $LocalExpensesTable(this);
+  late final $LocalPeriodsTable localPeriods = $LocalPeriodsTable(this);
+  late final $LocalLoansTable localLoans = $LocalLoansTable(this);
   late final $OutboxMutationsTable outboxMutations = $OutboxMutationsTable(
     this,
   );
@@ -2029,6 +3321,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   @override
   List<DatabaseSchemaEntity> get allSchemaEntities => [
     localExpenses,
+    localPeriods,
+    localLoans,
     outboxMutations,
     syncMetadata,
   ];
@@ -2042,6 +3336,7 @@ typedef $$LocalExpensesTableCreateCompanionBuilder =
       required String payer,
       required DateTime occurredAt,
       Value<String?> note,
+      Value<String?> periodId,
       required int version,
       required DateTime updatedAt,
       Value<DateTime?> deletedAt,
@@ -2057,6 +3352,7 @@ typedef $$LocalExpensesTableUpdateCompanionBuilder =
       Value<String> payer,
       Value<DateTime> occurredAt,
       Value<String?> note,
+      Value<String?> periodId,
       Value<int> version,
       Value<DateTime> updatedAt,
       Value<DateTime?> deletedAt,
@@ -2101,6 +3397,11 @@ class $$LocalExpensesTableFilterComposer
 
   ColumnFilters<String> get note => $composableBuilder(
     column: $table.note,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get periodId => $composableBuilder(
+    column: $table.periodId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2169,6 +3470,11 @@ class $$LocalExpensesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get periodId => $composableBuilder(
+    column: $table.periodId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get version => $composableBuilder(
     column: $table.version,
     builder: (column) => ColumnOrderings(column),
@@ -2226,6 +3532,9 @@ class $$LocalExpensesTableAnnotationComposer
   GeneratedColumn<String> get note =>
       $composableBuilder(column: $table.note, builder: (column) => column);
 
+  GeneratedColumn<String> get periodId =>
+      $composableBuilder(column: $table.periodId, builder: (column) => column);
+
   GeneratedColumn<int> get version =>
       $composableBuilder(column: $table.version, builder: (column) => column);
 
@@ -2281,6 +3590,7 @@ class $$LocalExpensesTableTableManager
                 Value<String> payer = const Value.absent(),
                 Value<DateTime> occurredAt = const Value.absent(),
                 Value<String?> note = const Value.absent(),
+                Value<String?> periodId = const Value.absent(),
                 Value<int> version = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<DateTime?> deletedAt = const Value.absent(),
@@ -2294,6 +3604,7 @@ class $$LocalExpensesTableTableManager
                 payer: payer,
                 occurredAt: occurredAt,
                 note: note,
+                periodId: periodId,
                 version: version,
                 updatedAt: updatedAt,
                 deletedAt: deletedAt,
@@ -2309,6 +3620,7 @@ class $$LocalExpensesTableTableManager
                 required String payer,
                 required DateTime occurredAt,
                 Value<String?> note = const Value.absent(),
+                Value<String?> periodId = const Value.absent(),
                 required int version,
                 required DateTime updatedAt,
                 Value<DateTime?> deletedAt = const Value.absent(),
@@ -2322,6 +3634,7 @@ class $$LocalExpensesTableTableManager
                 payer: payer,
                 occurredAt: occurredAt,
                 note: note,
+                periodId: periodId,
                 version: version,
                 updatedAt: updatedAt,
                 deletedAt: deletedAt,
@@ -2354,11 +3667,591 @@ typedef $$LocalExpensesTableProcessedTableManager =
       LocalExpenseRow,
       PrefetchHooks Function()
     >;
+typedef $$LocalPeriodsTableCreateCompanionBuilder =
+    LocalPeriodsCompanion Function({
+      required String id,
+      required int sequenceNumber,
+      required DateTime startedAt,
+      Value<DateTime?> closedAt,
+      Value<String?> note,
+      required int version,
+      required DateTime updatedAt,
+      required String syncState,
+      required DateTime localModifiedAt,
+      Value<int> rowid,
+    });
+typedef $$LocalPeriodsTableUpdateCompanionBuilder =
+    LocalPeriodsCompanion Function({
+      Value<String> id,
+      Value<int> sequenceNumber,
+      Value<DateTime> startedAt,
+      Value<DateTime?> closedAt,
+      Value<String?> note,
+      Value<int> version,
+      Value<DateTime> updatedAt,
+      Value<String> syncState,
+      Value<DateTime> localModifiedAt,
+      Value<int> rowid,
+    });
+
+class $$LocalPeriodsTableFilterComposer
+    extends Composer<_$AppDatabase, $LocalPeriodsTable> {
+  $$LocalPeriodsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sequenceNumber => $composableBuilder(
+    column: $table.sequenceNumber,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get startedAt => $composableBuilder(
+    column: $table.startedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get closedAt => $composableBuilder(
+    column: $table.closedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get note => $composableBuilder(
+    column: $table.note,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get version => $composableBuilder(
+    column: $table.version,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get syncState => $composableBuilder(
+    column: $table.syncState,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get localModifiedAt => $composableBuilder(
+    column: $table.localModifiedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$LocalPeriodsTableOrderingComposer
+    extends Composer<_$AppDatabase, $LocalPeriodsTable> {
+  $$LocalPeriodsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sequenceNumber => $composableBuilder(
+    column: $table.sequenceNumber,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get startedAt => $composableBuilder(
+    column: $table.startedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get closedAt => $composableBuilder(
+    column: $table.closedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get note => $composableBuilder(
+    column: $table.note,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get version => $composableBuilder(
+    column: $table.version,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get syncState => $composableBuilder(
+    column: $table.syncState,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get localModifiedAt => $composableBuilder(
+    column: $table.localModifiedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$LocalPeriodsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $LocalPeriodsTable> {
+  $$LocalPeriodsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<int> get sequenceNumber => $composableBuilder(
+    column: $table.sequenceNumber,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get startedAt =>
+      $composableBuilder(column: $table.startedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get closedAt =>
+      $composableBuilder(column: $table.closedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get note =>
+      $composableBuilder(column: $table.note, builder: (column) => column);
+
+  GeneratedColumn<int> get version =>
+      $composableBuilder(column: $table.version, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get syncState =>
+      $composableBuilder(column: $table.syncState, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get localModifiedAt => $composableBuilder(
+    column: $table.localModifiedAt,
+    builder: (column) => column,
+  );
+}
+
+class $$LocalPeriodsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $LocalPeriodsTable,
+          LocalPeriodRow,
+          $$LocalPeriodsTableFilterComposer,
+          $$LocalPeriodsTableOrderingComposer,
+          $$LocalPeriodsTableAnnotationComposer,
+          $$LocalPeriodsTableCreateCompanionBuilder,
+          $$LocalPeriodsTableUpdateCompanionBuilder,
+          (
+            LocalPeriodRow,
+            BaseReferences<_$AppDatabase, $LocalPeriodsTable, LocalPeriodRow>,
+          ),
+          LocalPeriodRow,
+          PrefetchHooks Function()
+        > {
+  $$LocalPeriodsTableTableManager(_$AppDatabase db, $LocalPeriodsTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalPeriodsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalPeriodsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalPeriodsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<int> sequenceNumber = const Value.absent(),
+                Value<DateTime> startedAt = const Value.absent(),
+                Value<DateTime?> closedAt = const Value.absent(),
+                Value<String?> note = const Value.absent(),
+                Value<int> version = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<String> syncState = const Value.absent(),
+                Value<DateTime> localModifiedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => LocalPeriodsCompanion(
+                id: id,
+                sequenceNumber: sequenceNumber,
+                startedAt: startedAt,
+                closedAt: closedAt,
+                note: note,
+                version: version,
+                updatedAt: updatedAt,
+                syncState: syncState,
+                localModifiedAt: localModifiedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required int sequenceNumber,
+                required DateTime startedAt,
+                Value<DateTime?> closedAt = const Value.absent(),
+                Value<String?> note = const Value.absent(),
+                required int version,
+                required DateTime updatedAt,
+                required String syncState,
+                required DateTime localModifiedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => LocalPeriodsCompanion.insert(
+                id: id,
+                sequenceNumber: sequenceNumber,
+                startedAt: startedAt,
+                closedAt: closedAt,
+                note: note,
+                version: version,
+                updatedAt: updatedAt,
+                syncState: syncState,
+                localModifiedAt: localModifiedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$LocalPeriodsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $LocalPeriodsTable,
+      LocalPeriodRow,
+      $$LocalPeriodsTableFilterComposer,
+      $$LocalPeriodsTableOrderingComposer,
+      $$LocalPeriodsTableAnnotationComposer,
+      $$LocalPeriodsTableCreateCompanionBuilder,
+      $$LocalPeriodsTableUpdateCompanionBuilder,
+      (
+        LocalPeriodRow,
+        BaseReferences<_$AppDatabase, $LocalPeriodsTable, LocalPeriodRow>,
+      ),
+      LocalPeriodRow,
+      PrefetchHooks Function()
+    >;
+typedef $$LocalLoansTableCreateCompanionBuilder = LocalLoansCompanion Function({
+  required String id,
+  required String debtor,
+  required int amountMinor,
+  required DateTime occurredAt,
+  Value<String?> note,
+  required int version,
+  required DateTime updatedAt,
+  Value<DateTime?> deletedAt,
+  required String syncState,
+  required DateTime localModifiedAt,
+  Value<int> rowid,
+});
+typedef $$LocalLoansTableUpdateCompanionBuilder = LocalLoansCompanion Function({
+  Value<String> id,
+  Value<String> debtor,
+  Value<int> amountMinor,
+  Value<DateTime> occurredAt,
+  Value<String?> note,
+  Value<int> version,
+  Value<DateTime> updatedAt,
+  Value<DateTime?> deletedAt,
+  Value<String> syncState,
+  Value<DateTime> localModifiedAt,
+  Value<int> rowid,
+});
+
+class $$LocalLoansTableFilterComposer
+    extends Composer<_$AppDatabase, $LocalLoansTable> {
+  $$LocalLoansTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get debtor => $composableBuilder(
+    column: $table.debtor,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get amountMinor => $composableBuilder(
+    column: $table.amountMinor,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get occurredAt => $composableBuilder(
+    column: $table.occurredAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get note => $composableBuilder(
+    column: $table.note,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get version => $composableBuilder(
+    column: $table.version,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get deletedAt => $composableBuilder(
+    column: $table.deletedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get syncState => $composableBuilder(
+    column: $table.syncState,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get localModifiedAt => $composableBuilder(
+    column: $table.localModifiedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$LocalLoansTableOrderingComposer
+    extends Composer<_$AppDatabase, $LocalLoansTable> {
+  $$LocalLoansTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get debtor => $composableBuilder(
+    column: $table.debtor,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get amountMinor => $composableBuilder(
+    column: $table.amountMinor,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get occurredAt => $composableBuilder(
+    column: $table.occurredAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get note => $composableBuilder(
+    column: $table.note,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get version => $composableBuilder(
+    column: $table.version,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get deletedAt => $composableBuilder(
+    column: $table.deletedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get syncState => $composableBuilder(
+    column: $table.syncState,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get localModifiedAt => $composableBuilder(
+    column: $table.localModifiedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$LocalLoansTableAnnotationComposer
+    extends Composer<_$AppDatabase, $LocalLoansTable> {
+  $$LocalLoansTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get debtor =>
+      $composableBuilder(column: $table.debtor, builder: (column) => column);
+
+  GeneratedColumn<int> get amountMinor => $composableBuilder(
+    column: $table.amountMinor,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get occurredAt => $composableBuilder(
+    column: $table.occurredAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get note =>
+      $composableBuilder(column: $table.note, builder: (column) => column);
+
+  GeneratedColumn<int> get version =>
+      $composableBuilder(column: $table.version, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get deletedAt =>
+      $composableBuilder(column: $table.deletedAt, builder: (column) => column);
+
+  GeneratedColumn<String> get syncState =>
+      $composableBuilder(column: $table.syncState, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get localModifiedAt => $composableBuilder(
+    column: $table.localModifiedAt,
+    builder: (column) => column,
+  );
+}
+
+class $$LocalLoansTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $LocalLoansTable,
+          LocalLoanRow,
+          $$LocalLoansTableFilterComposer,
+          $$LocalLoansTableOrderingComposer,
+          $$LocalLoansTableAnnotationComposer,
+          $$LocalLoansTableCreateCompanionBuilder,
+          $$LocalLoansTableUpdateCompanionBuilder,
+          (
+            LocalLoanRow,
+            BaseReferences<_$AppDatabase, $LocalLoansTable, LocalLoanRow>,
+          ),
+          LocalLoanRow,
+          PrefetchHooks Function()
+        > {
+  $$LocalLoansTableTableManager(_$AppDatabase db, $LocalLoansTable table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalLoansTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalLoansTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalLoansTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> debtor = const Value.absent(),
+                Value<int> amountMinor = const Value.absent(),
+                Value<DateTime> occurredAt = const Value.absent(),
+                Value<String?> note = const Value.absent(),
+                Value<int> version = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<DateTime?> deletedAt = const Value.absent(),
+                Value<String> syncState = const Value.absent(),
+                Value<DateTime> localModifiedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => LocalLoansCompanion(
+                id: id,
+                debtor: debtor,
+                amountMinor: amountMinor,
+                occurredAt: occurredAt,
+                note: note,
+                version: version,
+                updatedAt: updatedAt,
+                deletedAt: deletedAt,
+                syncState: syncState,
+                localModifiedAt: localModifiedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String debtor,
+                required int amountMinor,
+                required DateTime occurredAt,
+                Value<String?> note = const Value.absent(),
+                required int version,
+                required DateTime updatedAt,
+                Value<DateTime?> deletedAt = const Value.absent(),
+                required String syncState,
+                required DateTime localModifiedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => LocalLoansCompanion.insert(
+                id: id,
+                debtor: debtor,
+                amountMinor: amountMinor,
+                occurredAt: occurredAt,
+                note: note,
+                version: version,
+                updatedAt: updatedAt,
+                deletedAt: deletedAt,
+                syncState: syncState,
+                localModifiedAt: localModifiedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$LocalLoansTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $LocalLoansTable,
+      LocalLoanRow,
+      $$LocalLoansTableFilterComposer,
+      $$LocalLoansTableOrderingComposer,
+      $$LocalLoansTableAnnotationComposer,
+      $$LocalLoansTableCreateCompanionBuilder,
+      $$LocalLoansTableUpdateCompanionBuilder,
+      (
+        LocalLoanRow,
+        BaseReferences<_$AppDatabase, $LocalLoansTable, LocalLoanRow>,
+      ),
+      LocalLoanRow,
+      PrefetchHooks Function()
+    >;
 typedef $$OutboxMutationsTableCreateCompanionBuilder =
     OutboxMutationsCompanion Function({
       Value<int> localSequence,
       required String mutationId,
       required String entityId,
+      Value<String> entityType,
       required String action,
       required int baseVersion,
       Value<String?> payloadJson,
@@ -2374,6 +4267,7 @@ typedef $$OutboxMutationsTableUpdateCompanionBuilder =
       Value<int> localSequence,
       Value<String> mutationId,
       Value<String> entityId,
+      Value<String> entityType,
       Value<String> action,
       Value<int> baseVersion,
       Value<String?> payloadJson,
@@ -2406,6 +4300,11 @@ class $$OutboxMutationsTableFilterComposer
 
   ColumnFilters<String> get entityId => $composableBuilder(
     column: $table.entityId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get entityType => $composableBuilder(
+    column: $table.entityType,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2479,6 +4378,11 @@ class $$OutboxMutationsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get action => $composableBuilder(
     column: $table.action,
     builder: (column) => ColumnOrderings(column),
@@ -2546,6 +4450,11 @@ class $$OutboxMutationsTableAnnotationComposer
 
   GeneratedColumn<String> get entityId =>
       $composableBuilder(column: $table.entityId, builder: (column) => column);
+
+  GeneratedColumn<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get action =>
       $composableBuilder(column: $table.action, builder: (column) => column);
@@ -2627,6 +4536,7 @@ class $$OutboxMutationsTableTableManager
                 Value<int> localSequence = const Value.absent(),
                 Value<String> mutationId = const Value.absent(),
                 Value<String> entityId = const Value.absent(),
+                Value<String> entityType = const Value.absent(),
                 Value<String> action = const Value.absent(),
                 Value<int> baseVersion = const Value.absent(),
                 Value<String?> payloadJson = const Value.absent(),
@@ -2640,6 +4550,7 @@ class $$OutboxMutationsTableTableManager
                 localSequence: localSequence,
                 mutationId: mutationId,
                 entityId: entityId,
+                entityType: entityType,
                 action: action,
                 baseVersion: baseVersion,
                 payloadJson: payloadJson,
@@ -2655,6 +4566,7 @@ class $$OutboxMutationsTableTableManager
                 Value<int> localSequence = const Value.absent(),
                 required String mutationId,
                 required String entityId,
+                Value<String> entityType = const Value.absent(),
                 required String action,
                 required int baseVersion,
                 Value<String?> payloadJson = const Value.absent(),
@@ -2668,6 +4580,7 @@ class $$OutboxMutationsTableTableManager
                 localSequence: localSequence,
                 mutationId: mutationId,
                 entityId: entityId,
+                entityType: entityType,
                 action: action,
                 baseVersion: baseVersion,
                 payloadJson: payloadJson,
@@ -2991,6 +4904,10 @@ class $AppDatabaseManager {
   $AppDatabaseManager(this._db);
   $$LocalExpensesTableTableManager get localExpenses =>
       $$LocalExpensesTableTableManager(_db, _db.localExpenses);
+  $$LocalPeriodsTableTableManager get localPeriods =>
+      $$LocalPeriodsTableTableManager(_db, _db.localPeriods);
+  $$LocalLoansTableTableManager get localLoans =>
+      $$LocalLoansTableTableManager(_db, _db.localLoans);
   $$OutboxMutationsTableTableManager get outboxMutations =>
       $$OutboxMutationsTableTableManager(_db, _db.outboxMutations);
   $$SyncMetadataTableTableManager get syncMetadata =>
