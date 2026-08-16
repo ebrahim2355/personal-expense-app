@@ -10,9 +10,13 @@ import 'data/remote/api_client.dart';
 import 'data/remote/http_transport.dart';
 import 'data/repositories/auth_repository.dart';
 import 'data/repositories/expense_repository.dart';
+import 'data/repositories/loan_repository.dart';
+import 'data/repositories/period_repository.dart';
 import 'data/security/token_store.dart';
 import 'domain/expense.dart';
+import 'domain/loan.dart';
 import 'domain/session.dart';
+import 'domain/spending_period.dart';
 
 final appConfigProvider = Provider<AppConfig>((ref) {
   return AppConfig.fromEnvironment();
@@ -60,6 +64,18 @@ final expenseRepositoryProvider = Provider<ExpenseRepository>((ref) {
   return repository;
 });
 
+final periodRepositoryProvider = Provider<PeriodRepository>((ref) {
+  final repository = DriftPeriodRepository(ref.watch(appDatabaseProvider));
+  ref.onDispose(repository.close);
+  return repository;
+});
+
+final loanRepositoryProvider = Provider<LoanRepository>((ref) {
+  final repository = DriftLoanRepository(ref.watch(appDatabaseProvider));
+  ref.onDispose(repository.close);
+  return repository;
+});
+
 final authRepositoryProvider = Provider<MemberAuthRepository>((ref) {
   return AuthRepository(
     api: ref.watch(authenticationApiProvider),
@@ -87,6 +103,8 @@ final backgroundSyncSchedulerProvider = Provider<BackgroundSyncScheduler>((
 final syncTriggerControllerProvider = Provider<SyncTriggerController>((ref) {
   final controller = SyncTriggerController(
     expenseRepository: ref.watch(expenseRepositoryProvider),
+    periodRepository: ref.watch(periodRepositoryProvider),
+    loanRepository: ref.watch(loanRepositoryProvider),
     syncCoordinator: ref.watch(syncCoordinatorProvider),
     sessionController: ref.watch(sessionControllerProvider),
     backgroundScheduler: ref.watch(backgroundSyncSchedulerProvider),
@@ -108,6 +126,20 @@ final appStartupProvider = FutureProvider<void>((ref) async {
 
 final visibleExpensesProvider = StreamProvider<List<Expense>>((ref) {
   return ref.watch(expenseRepositoryProvider).watchVisibleExpenses();
+});
+
+/// Every period, newest first, so History can offer a period selector.
+final visiblePeriodsProvider = StreamProvider<List<SpendingPeriod>>((ref) {
+  return ref.watch(periodRepositoryProvider).watchPeriods();
+});
+
+/// The period the dashboard is scoped to. Null only before the first bootstrap.
+final openPeriodProvider = StreamProvider<SpendingPeriod?>((ref) {
+  return ref.watch(periodRepositoryProvider).watchOpenPeriod();
+});
+
+final visibleLoansProvider = StreamProvider<List<Loan>>((ref) {
+  return ref.watch(loanRepositoryProvider).watchVisibleLoans();
 });
 
 final syncNoticesProvider = StreamProvider<SyncNotice>((ref) {

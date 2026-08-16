@@ -26,14 +26,25 @@ enum SyncNoticeKind { conflict, permanentFailure }
 final class SyncNotice {
   const SyncNotice({
     required this.kind,
-    required this.expenseId,
+    required this.entityType,
+    required this.entityId,
     required this.message,
   });
 
   final SyncNoticeKind kind;
-  final String expenseId;
+
+  /// Which ledger the notice is about, so the UI can point at the right screen.
+  final SyncEntityType entityType;
+  final String entityId;
   final String message;
 }
+
+/// How an entity is named in a notice the members read.
+String _entityLabel(SyncEntityType entityType) => switch (entityType) {
+  SyncEntityType.expense => 'expense',
+  SyncEntityType.period => 'spending period',
+  SyncEntityType.loan => 'loan entry',
+};
 
 final class RetryPolicy {
   RetryPolicy({Random? random}) : _random = random ?? Random.secure();
@@ -188,10 +199,12 @@ final class SyncCoordinator {
                 ]))
               .get();
       final now = _clock();
+      // One in-flight mutation per entity, keyed by type as well as id so the
+      // three ledgers never shadow one another.
       final seenEntities = <String>{};
       final ready = <OutboxMutationRow>[];
       for (final row in all) {
-        if (!seenEntities.add(row.entityId)) {
+        if (!seenEntities.add('${row.entityType}:${row.entityId}')) {
           continue;
         }
         if (row.status != OutboxStatus.pending.storedName) {
@@ -229,12 +242,18 @@ final class SyncCoordinator {
       }
       payload = decoded.map((key, value) => MapEntry(key.toString(), value));
     }
+    final entityType = SyncEntityTypeWire.parse(row.entityType);
     return MutationCandidateDto(
       mutationId: row.mutationId,
       entityId: row.entityId,
+      entityType: entityType,
       operation: MutationOperationWire.parse(row.action),
       baseVersion: row.baseVersion,
-      expense: payload,
+      // The payload travels under the property that matches the entity type, so
+      // a period never arrives on the wire looking like an expense.
+      expense: entityType == SyncEntityType.expense ? payload : null,
+      period: entityType == SyncEntityType.period ? payload : null,
+      loan: entityType == SyncEntityType.loan ? payload : null,
     );
   }
 
@@ -264,27 +283,33 @@ final class SyncCoordinator {
       if (mutation == null) {
         return;
       }
+      // The queued row is the local authority on what was sent, so a result
+      // whose entityType is absent still resolves to the right table.
+      final entityType = SyncEntityTypeWire.parse(mutation.entityType);
 
       switch (result.status) {
         case MutationResultStatus.applied:
-          final expense = result.expense;
-          if (expense == null) {
-            throw const FormatException('APPLIED result needs an expense.');
+          final snapshot = result.snapshot;
+          if (snapshot == null) {
+            throw const FormatException('APPLIED result needs a snapshot.');
           }
-          await _acknowledgeMutation(mutation, expense);
+          await _acknowledgeMutation(mutation, snapshot);
         case MutationResultStatus.conflict:
-          final expense = result.expense;
-          if (expense == null) {
-            throw const FormatException('CONFLICT result needs an expense.');
+          final snapshot = result.snapshot;
+          if (snapshot == null) {
+            throw const FormatException('CONFLICT result needs a snapshot.');
           }
           await (_database.delete(
             _database.outboxMutations,
           )..where((row) => row.entityId.equals(mutation.entityId))).go();
-          await _upsertAuthoritative(expense);
+          await _upsertAuthoritative(snapshot);
           notice = SyncNotice(
             kind: SyncNoticeKind.conflict,
-            expenseId: mutation.entityId,
-            message: 'This expense changed elsewhere. Server data was kept.',
+            entityType: entityType,
+            entityId: mutation.entityId,
+            message:
+                'This ${_entityLabel(entityType)} changed elsewhere. '
+                'Server data was kept.',
           );
         case MutationResultStatus.rejected:
           final code = result.code ?? 'REJECTED';
@@ -297,10 +322,11 @@ final class SyncCoordinator {
                   lastErrorCode: Value<String>(code),
                 ),
               );
-          await _markExpenseNeedsAttention(mutation.entityId);
+          await _markNeedsAttention(entityType, mutation.entityId);
           notice = SyncNotice(
             kind: SyncNoticeKind.permanentFailure,
-            expenseId: mutation.entityId,
+            entityType: entityType,
+            entityId: mutation.entityId,
             message: 'This local change could not be synchronized ($code).',
           );
       }
@@ -312,7 +338,7 @@ final class SyncCoordinator {
 
   Future<void> _acknowledgeMutation(
     OutboxMutationRow mutation,
-    ExpenseDto authoritative,
+    EntitySnapshotDto authoritative,
   ) async {
     await (_database.delete(
       _database.outboxMutations,
@@ -334,13 +360,10 @@ final class SyncCoordinator {
     )..where((row) => row.localSequence.equals(next.localSequence))).write(
       OutboxMutationsCompanion(baseVersion: Value<int>(authoritative.version)),
     );
-    await (_database.update(
-      _database.localExpenses,
-    )..where((row) => row.id.equals(mutation.entityId))).write(
-      LocalExpensesCompanion(
-        version: Value<int>(authoritative.version),
-        syncState: Value<String>(LocalSyncState.pending.storedName),
-      ),
+    await _rebaseLocal(
+      authoritative.entityType,
+      mutation.entityId,
+      authoritative.version,
     );
   }
 
@@ -398,19 +421,67 @@ final class SyncCoordinator {
             lastErrorCode: Value<String>(code),
           ),
         );
-        await _markExpenseNeedsAttention(row.entityId);
+        await _markNeedsAttention(
+          SyncEntityTypeWire.parse(row.entityType),
+          row.entityId,
+        );
       }
     });
   }
 
-  Future<void> _markExpenseNeedsAttention(String entityId) {
-    return (_database.update(
-      _database.localExpenses,
-    )..where((row) => row.id.equals(entityId))).write(
-      LocalExpensesCompanion(
-        syncState: Value<String>(LocalSyncState.needsAttention.storedName),
-      ),
-    );
+  /// Flags the local row so the member sees the entry needs their attention.
+  Future<void> _markNeedsAttention(SyncEntityType entityType, String entityId) {
+    final flagged = Value<String>(LocalSyncState.needsAttention.storedName);
+    return switch (entityType) {
+      SyncEntityType.expense =>
+        (_database.update(_database.localExpenses)
+              ..where((row) => row.id.equals(entityId)))
+            .write(LocalExpensesCompanion(syncState: flagged)),
+      SyncEntityType.period =>
+        (_database.update(_database.localPeriods)
+              ..where((row) => row.id.equals(entityId)))
+            .write(LocalPeriodsCompanion(syncState: flagged)),
+      SyncEntityType.loan =>
+        (_database.update(_database.localLoans)
+              ..where((row) => row.id.equals(entityId)))
+            .write(LocalLoansCompanion(syncState: flagged)),
+    };
+  }
+
+  /// Adopts the server's version for an entity that still has queued edits, so
+  /// the next one replays against the right base instead of conflicting.
+  Future<void> _rebaseLocal(
+    SyncEntityType entityType,
+    String entityId,
+    int version,
+  ) {
+    final pending = Value<String>(LocalSyncState.pending.storedName);
+    return switch (entityType) {
+      SyncEntityType.expense =>
+        (_database.update(
+          _database.localExpenses,
+        )..where((row) => row.id.equals(entityId))).write(
+          LocalExpensesCompanion(
+            version: Value<int>(version),
+            syncState: pending,
+          ),
+        ),
+      SyncEntityType.period =>
+        (_database.update(
+          _database.localPeriods,
+        )..where((row) => row.id.equals(entityId))).write(
+          LocalPeriodsCompanion(
+            version: Value<int>(version),
+            syncState: pending,
+          ),
+        ),
+      SyncEntityType.loan =>
+        (_database.update(
+          _database.localLoans,
+        )..where((row) => row.id.equals(entityId))).write(
+          LocalLoansCompanion(version: Value<int>(version), syncState: pending),
+        ),
+    };
   }
 
   Future<void> _bootstrapIfNeeded() async {
@@ -434,8 +505,10 @@ final class SyncCoordinator {
         throw const FormatException('Bootstrap continuation token is missing.');
       }
       await _database.transaction(() async {
-        for (final expense in page.items) {
-          await _applyRemoteExpense(expense);
+        // The server pages periods before expenses before loans, so an expense
+        // never lands before the period it names.
+        for (final item in page.items) {
+          await _applyRemoteSnapshot(item);
         }
         await (_database.update(
           _database.syncMetadata,
@@ -499,35 +572,72 @@ final class SyncCoordinator {
               ..where((row) => row.mutationId.equals(change.originMutationId)))
             .getSingleOrNull();
     if (originating != null) {
-      await _acknowledgeMutation(originating, change.expense);
+      await _acknowledgeMutation(originating, change.snapshot);
       return;
     }
-    await _applyRemoteExpense(change.expense);
+    await _applyRemoteSnapshot(change.snapshot);
   }
 
-  Future<void> _applyRemoteExpense(ExpenseDto remote) async {
+  Future<void> _applyRemoteSnapshot(EntitySnapshotDto remote) async {
     final pending =
         await (_database.select(_database.outboxMutations)
-              ..where((row) => row.entityId.equals(remote.id))
+              ..where((row) => row.entityId.equals(remote.entityId))
               ..limit(1))
             .getSingleOrNull();
     if (pending != null) {
       return;
     }
-    final local = await _database.findExpenseRow(remote.id);
-    if (local != null && local.version > remote.version) {
+    final localVersion = await _localVersion(
+      remote.entityType,
+      remote.entityId,
+    );
+    if (localVersion != null && localVersion > remote.version) {
       return;
     }
     await _upsertAuthoritative(remote);
   }
 
-  Future<void> _upsertAuthoritative(ExpenseDto remote) {
-    final expense = expenseFromDto(remote);
-    return _database
-        .into(_database.localExpenses)
-        .insertOnConflictUpdate(
-          expenseCompanion(expense, localModifiedAt: remote.updatedAt),
-        );
+  Future<int?> _localVersion(
+    SyncEntityType entityType,
+    String entityId,
+  ) async => switch (entityType) {
+    SyncEntityType.expense => (await _database.findExpenseRow(
+      entityId,
+    ))?.version,
+    SyncEntityType.period => (await _database.findPeriodRow(entityId))?.version,
+    SyncEntityType.loan => (await _database.findLoanRow(entityId))?.version,
+  };
+
+  Future<void> _upsertAuthoritative(EntitySnapshotDto remote) {
+    switch (remote.entityType) {
+      case SyncEntityType.expense:
+        final dto = remote.expense!;
+        return _database
+            .into(_database.localExpenses)
+            .insertOnConflictUpdate(
+              expenseCompanion(
+                expenseFromDto(dto),
+                localModifiedAt: dto.updatedAt,
+              ),
+            );
+      case SyncEntityType.period:
+        final dto = remote.period!;
+        return _database
+            .into(_database.localPeriods)
+            .insertOnConflictUpdate(
+              periodCompanion(
+                periodFromDto(dto),
+                localModifiedAt: dto.updatedAt,
+              ),
+            );
+      case SyncEntityType.loan:
+        final dto = remote.loan!;
+        return _database
+            .into(_database.localLoans)
+            .insertOnConflictUpdate(
+              loanCompanion(loanFromDto(dto), localModifiedAt: dto.updatedAt),
+            );
+    }
   }
 
   Future<void> close() async {

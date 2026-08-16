@@ -5,36 +5,34 @@ import 'package:drift/drift.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../domain/expense.dart';
+import '../../domain/loan.dart';
 import '../local/app_database.dart';
 import '../local/database_mappers.dart';
 import '../remote/api_models.dart';
 import 'local_mutations.dart';
 
-export 'local_mutations.dart'
-    show LocalMutationEvent, OutboxStatus, OutboxStatusStorage;
-
-final class ExpenseNotFoundException implements Exception {
-  const ExpenseNotFoundException(this.id);
+final class LoanNotFoundException implements Exception {
+  const LoanNotFoundException(this.id);
 
   final String id;
 }
 
-abstract interface class ExpenseRepository {
-  Stream<List<Expense>> watchVisibleExpenses();
+abstract interface class LoanRepository {
+  Stream<List<Loan>> watchVisibleLoans();
 
-  Future<List<Expense>> readVisibleExpenses();
+  Future<List<Loan>> readVisibleLoans();
 
-  Future<Expense> create(ExpenseDraft draft);
+  Future<Loan> create(LoanDraft draft);
 
-  Future<Expense> edit(String id, ExpenseDraft draft);
+  Future<Loan> edit(String id, LoanDraft draft);
 
   Future<void> delete(String id);
 
   Stream<LocalMutationEvent> get localMutations;
 }
 
-final class DriftExpenseRepository implements ExpenseRepository {
-  DriftExpenseRepository(this._database, {Uuid? uuid})
+final class DriftLoanRepository implements LoanRepository {
+  DriftLoanRepository(this._database, {Uuid? uuid})
     : _uuid = uuid ?? const Uuid();
 
   final AppDatabase _database;
@@ -46,103 +44,97 @@ final class DriftExpenseRepository implements ExpenseRepository {
   Stream<LocalMutationEvent> get localMutations => _localMutations.stream;
 
   @override
-  Stream<List<Expense>> watchVisibleExpenses() => _database
-      .watchVisibleExpenseRows()
-      .map((rows) => rows.map(expenseFromRow).toList(growable: false));
+  Stream<List<Loan>> watchVisibleLoans() => _database
+      .watchVisibleLoanRows()
+      .map((rows) => rows.map(loanFromRow).toList(growable: false));
 
   @override
-  Future<List<Expense>> readVisibleExpenses() async =>
-      (await _database.readVisibleExpenseRows())
-          .map(expenseFromRow)
+  Future<List<Loan>> readVisibleLoans() async =>
+      (await _database.readVisibleLoanRows())
+          .map(loanFromRow)
           .toList(growable: false);
 
   @override
-  Future<Expense> create(ExpenseDraft draft) async {
-    final normalized = draft.normalized().withPeriodId(
-      draft.periodId ?? await _openPeriodId(),
-    );
+  Future<Loan> create(LoanDraft draft) async {
+    final normalized = draft.normalized();
+    // The only automatic field on the form: a loan is stamped when it is
+    // recorded, and never asks the member for a date.
     final now = DateTime.now().toUtc();
-    final expense = Expense(
+    final loan = Loan(
       id: _uuid.v4(),
+      debtor: normalized.debtor,
       amountMinor: normalized.amountMinor,
-      category: normalized.category,
-      payer: normalized.payer,
-      occurredAt: normalized.occurredAt,
+      occurredAt: now,
       note: normalized.note,
-      periodId: normalized.periodId,
       version: 0,
       updatedAt: now,
       syncState: LocalSyncState.pending,
     );
     await _database.transaction(() async {
       await _database
-          .into(_database.localExpenses)
-          .insert(expenseCompanion(expense, localModifiedAt: now));
+          .into(_database.localLoans)
+          .insert(loanCompanion(loan, localModifiedAt: now));
       await _enqueue(
-        entityId: expense.id,
+        entityId: loan.id,
         operation: MutationOperation.create,
         baseVersion: 0,
-        payload: normalized.toWireJson(),
+        payload: normalized.toWireJson(occurredAt: now),
         now: now,
       );
     });
-    _localMutations.add(LocalMutationEvent(SyncEntityType.expense, expense.id));
-    return expense;
+    _localMutations.add(LocalMutationEvent(SyncEntityType.loan, loan.id));
+    return loan;
   }
 
   @override
-  Future<Expense> edit(String id, ExpenseDraft draft) async {
-    final currentRow = await _database.findExpenseRow(id);
+  Future<Loan> edit(String id, LoanDraft draft) async {
+    final currentRow = await _database.findLoanRow(id);
     if (currentRow == null || currentRow.deletedAt != null) {
-      throw ExpenseNotFoundException(id);
+      throw LoanNotFoundException(id);
     }
-    // An edit never moves an expense between periods: it keeps whichever period
-    // it was filed into, and only falls back to the open one when it has none.
-    final normalized = draft.normalized().withPeriodId(
-      currentRow.periodId ?? draft.periodId ?? await _openPeriodId(),
-    );
+    final normalized = draft.normalized();
     final now = DateTime.now().toUtc();
-    final current = expenseFromRow(currentRow);
-    final updated = Expense(
+    final current = loanFromRow(currentRow);
+    // An edit keeps the original stamp: the entry still records when the money
+    // changed hands, not when the wording was corrected.
+    final updated = Loan(
       id: current.id,
+      debtor: normalized.debtor,
       amountMinor: normalized.amountMinor,
-      category: normalized.category,
-      payer: normalized.payer,
-      occurredAt: normalized.occurredAt,
+      occurredAt: current.occurredAt,
       note: normalized.note,
-      periodId: normalized.periodId,
       version: current.version,
       updatedAt: now,
       syncState: LocalSyncState.pending,
     );
     await _database.transaction(() async {
-      await (_database.update(_database.localExpenses)
+      await (_database.update(_database.localLoans)
             ..where((row) => row.id.equals(id)))
-          .write(expenseCompanion(updated, localModifiedAt: now));
+          .write(loanCompanion(updated, localModifiedAt: now));
       await _enqueue(
         entityId: id,
         operation: MutationOperation.update,
         baseVersion: current.version,
-        payload: normalized.toWireJson(),
+        payload: normalized.toWireJson(occurredAt: current.occurredAt),
         now: now,
       );
     });
-    _localMutations.add(LocalMutationEvent(SyncEntityType.expense, id));
+    _localMutations.add(LocalMutationEvent(SyncEntityType.loan, id));
     return updated;
   }
 
   @override
   Future<void> delete(String id) async {
-    final currentRow = await _database.findExpenseRow(id);
+    final currentRow = await _database.findLoanRow(id);
     if (currentRow == null || currentRow.deletedAt != null) {
-      throw ExpenseNotFoundException(id);
+      throw LoanNotFoundException(id);
     }
     final now = DateTime.now().toUtc();
     await _database.transaction(() async {
       await (_database.update(
-        _database.localExpenses,
+        _database.localLoans,
       )..where((row) => row.id.equals(id))).write(
-        LocalExpensesCompanion(
+        LocalLoansCompanion(
           deletedAt: Value<DateTime>(now),
           updatedAt: Value<DateTime>(now),
           localModifiedAt: Value<DateTime>(now),
@@ -157,13 +149,8 @@ final class DriftExpenseRepository implements ExpenseRepository {
         now: now,
       );
     });
-    _localMutations.add(LocalMutationEvent(SyncEntityType.expense, id));
+    _localMutations.add(LocalMutationEvent(SyncEntityType.loan, id));
   }
-
-  /// The open period's id, or null before the first bootstrap delivers one — in
-  /// which case the wire payload omits it and the server picks.
-  Future<String?> _openPeriodId() async =>
-      (await _database.readOpenPeriodRow())?.id;
 
   Future<void> _enqueue({
     required String entityId,
@@ -178,7 +165,7 @@ final class DriftExpenseRepository implements ExpenseRepository {
           OutboxMutationsCompanion.insert(
             mutationId: _uuid.v4(),
             entityId: entityId,
-            entityType: Value<String>(SyncEntityType.expense.storedName),
+            entityType: Value<String>(SyncEntityType.loan.storedName),
             action: operation.storedName,
             baseVersion: baseVersion,
             payloadJson: Value<String?>(

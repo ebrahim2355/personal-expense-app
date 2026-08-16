@@ -8,15 +8,23 @@ on raw Dio or Drift implementation types.
 
 - Login: fixed Sumon/Ebrahim selector, obscured numeric PIN, generic credential
   errors, and explicit first-login connectivity guidance.
-- Dashboard: current `Asia/Dhaka` month by default, exact BDT totals, paid and
-  allocated amounts, settlement, recent expenses, date-range selection, and
-  non-blocking sync/offline state.
-- Add/edit: string-to-poisha amount validation, category and payer selectors,
-  Dhaka date/time, 500-code-point note, and a duplicate-submit guard.
-- History: newest-first local rows with date, payer, and category filters plus
-  edit and confirmed soft deletion.
+- Dashboard: the household's open spending period, exact BDT totals, paid and
+  allocated amounts, settlement, recent expenses, a confirmed action that settles
+  the period and opens the next one, and non-blocking sync/offline state. There is
+  no date-range control.
+- Lending: the manual loan ledger with its own net total, newest-first entries, a
+  local text search, and add/edit/confirmed-delete. It never changes the expense
+  settlement figure.
+- Add/edit expense: whole-taka digits-only amount validation, category and payer
+  selectors, Dhaka date/time, 500-code-point note, and a duplicate-submit guard.
+- Add/edit loan: debtor selector, whole-taka amount, optional note, and the same
+  duplicate-submit guard. The timestamp is recorded, never asked for.
+- History: newest-first local rows with a local text search plus date, payer, and
+  category filters, edit, and confirmed soft deletion.
 - Settings: signed-in member, API environment, app version, manual sync, logout,
   and a concise local-data/background-sync explanation.
+
+Bottom navigation is Dashboard, Lending, History, and Settings.
 
 Material 3 controls retain at least 48 logical-pixel tap targets. Layout tests
 cover a 320-pixel-wide surface with enlarged text. All visible totals are pure
@@ -43,7 +51,8 @@ flutter build apk --release `
 
 The base URL is configuration, not a secret. Never put tokens, PINs, or signing
 values in a Dart define. Access and refresh tokens are stored only with Android
-secure storage; Drift stores expense/outbox/sync metadata but no credentials.
+secure storage; Drift stores expenses, spending periods, loans, outbox, and sync
+metadata, but no credentials.
 Cleartext traffic is enabled only by the debug manifest for local development;
 the main/release manifest explicitly disables it.
 
@@ -92,12 +101,17 @@ flutter clean
 
 ## Implemented data boundaries
 
-- Drift is the UI source of truth. Local create/edit/delete changes the row and
-  appends a frozen UUID mutation in one transaction.
+- Drift is the UI source of truth for expenses, spending periods, and loans.
+  Local create/edit/delete changes the row and appends a frozen UUID mutation in
+  one transaction; closing a period writes the close, the next period, and both
+  mutations in a single transaction with the close queued first.
 - The sync coordinator serializes jobs, pushes dependency-ready outbox items,
-  handles per-item results, bootstraps a new device, and pulls every cursor page.
-- Conflicts use the server snapshot and emit a short notice; permanent rejects
-  remain visible as needing attention.
+  handles per-item results, bootstraps a new device in period → expense → loan
+  order, and pulls every cursor page. One outbox and one change feed carry all
+  three entity types, discriminated by `entityType`.
+- Conflicts use the server snapshot and emit a short notice naming the entity
+  type; permanent rejects remain visible as needing attention and are never
+  retried.
 - Dio refreshes a 401 once with refresh-token rotation and retries the original
   request once. Refresh failure clears secure tokens without deleting Drift data.
 - Launch, resume, mutation, manual refresh, live connectivity recovery, and

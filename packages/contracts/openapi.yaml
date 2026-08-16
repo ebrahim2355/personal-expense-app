@@ -4,8 +4,12 @@ info:
   version: 1.0.0
   description: >-
     Canonical authentication and expense synchronization API for the fixed
-    Sumon/Ebrahim household. Money is represented only as integer BDT poisha.
-    Dashboard summaries are computed by Flutter from synchronized local rows.
+    Sumon/Ebrahim household. Money is represented only as integer BDT poisha,
+    and every accepted amount is a whole number of taka, so amountMinor is
+    always a multiple of 100. Shared expenses belong to a spending period that
+    the household closes by hand after settling up. Manual loans are tracked in
+    a separate ledger with its own total. Dashboard summaries are computed by
+    Flutter from synchronized local rows.
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -256,15 +260,19 @@ paths:
       operationId: bootstrapExpenses
       summary: Bootstrap a first device from a stable watermark
       description: >-
-        Start without pageToken. Persist the returned watermarkCursor only after
-        all bootstrap pages are applied, then pull /v1/sync/changes from that
-        watermark before declaring the first synchronization complete.
+        Start without pageToken and keep calling until nextPageToken is null.
+        Pages carry expenses, spending periods, and loans; each item names its
+        own entityType. Items are walked in the order PERIOD, EXPENSE, LOAN, so
+        every spending period arrives before the expenses that reference it.
+        Persist the returned watermarkCursor only after all bootstrap pages are
+        applied, then pull /v1/sync/changes from that watermark before declaring
+        the first synchronization complete.
       parameters:
         - $ref: '#/components/parameters/BootstrapPageToken'
         - $ref: '#/components/parameters/PageLimit'
       responses:
         '200':
-          description: A canonical expense page including existing tombstones.
+          description: A canonical entity page including existing tombstones.
           content:
             application/json:
               schema:
@@ -371,6 +379,12 @@ components:
     MutationOperation:
       type: string
       enum: [CREATE, UPDATE, DELETE]
+    EntityType:
+      type: string
+      enum: [EXPENSE, PERIOD, LOAN]
+      description: >-
+        Which synchronized entity a mutation, result, change, or bootstrap item
+        refers to. Absent values are read as EXPENSE.
     Member:
       type: object
       additionalProperties: false
@@ -443,9 +457,12 @@ components:
       properties:
         amountMinor:
           type: integer
-          minimum: 1
+          minimum: 100
           maximum: 99999999999
-          description: BDT poisha; never a decimal BDT amount.
+          multipleOf: 100
+          description: >-
+            BDT poisha; never a decimal BDT amount. Only whole taka are
+            accepted, so the value is always a multiple of 100.
         category:
           $ref: '#/components/schemas/ExpenseCategory'
         payer:
@@ -457,6 +474,15 @@ components:
         note:
           type: [string, 'null']
           maxLength: 500
+        periodId:
+          type: string
+          format: uuid
+          description: >-
+            Spending period this expense belongs to. Omit it to let the server
+            assign the household's currently open period. An unknown period is
+            rejected with PERIOD_NOT_FOUND; a closed period is accepted, because
+            an expense created offline before a close still belongs to the
+            period it was recorded in.
     Expense:
       type: object
       additionalProperties: false
@@ -467,6 +493,7 @@ components:
         - payer
         - occurredAt
         - note
+        - periodId
         - version
         - updatedAt
         - deletedAt
@@ -476,12 +503,143 @@ components:
           format: uuid
         amountMinor:
           type: integer
-          minimum: 1
+          minimum: 100
           maximum: 99999999999
+          multipleOf: 100
         category:
           $ref: '#/components/schemas/ExpenseCategory'
         payer:
           $ref: '#/components/schemas/MemberKey'
+        occurredAt:
+          type: string
+          format: date-time
+        note:
+          type: [string, 'null']
+          maxLength: 500
+        periodId:
+          type: string
+          format: uuid
+        version:
+          type: integer
+          minimum: 1
+        updatedAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Non-null identifies a soft-delete tombstone.
+    PeriodInput:
+      type: object
+      additionalProperties: false
+      required: [sequenceNumber, startedAt]
+      description: >-
+        A spending period. Closing the household's history is an UPDATE that
+        sets closedAt, followed by a CREATE for the next period. Periods are
+        never deleted, because active expenses reference them.
+      properties:
+        sequenceNumber:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+          description: >-
+            Human-facing period number, starting at 1. The server rejects a
+            CREATE with PERIOD_ALREADY_OPEN while another period is open, so
+            two devices cannot both open a period.
+        startedAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: [string, 'null']
+          format: date-time
+          description: >-
+            Non-null marks the period settled and archived. It must not precede
+            startedAt. A closed period cannot be reopened.
+        note:
+          type: [string, 'null']
+          maxLength: 500
+    SpendingPeriod:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - sequenceNumber
+        - startedAt
+        - closedAt
+        - note
+        - version
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        sequenceNumber:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        startedAt:
+          type: string
+          format: date-time
+        closedAt:
+          type: [string, 'null']
+          format: date-time
+        note:
+          type: [string, 'null']
+          maxLength: 500
+        version:
+          type: integer
+          minimum: 1
+        updatedAt:
+          type: string
+          format: date-time
+    LoanInput:
+      type: object
+      additionalProperties: false
+      required: [debtor, amountMinor, occurredAt]
+      description: >-
+        One manually recorded loan between the two members. The debtor owes the
+        amount; the other member is the creditor. Loans are tracked separately
+        from shared expenses and never affect the expense settlement figure.
+      properties:
+        debtor:
+          $ref: '#/components/schemas/MemberKey'
+        amountMinor:
+          type: integer
+          minimum: 100
+          maximum: 99999999999
+          multipleOf: 100
+        occurredAt:
+          type: string
+          format: date-time
+          description: >-
+            Recorded automatically by the client when the entry is created; an
+            RFC 3339 timestamp with an explicit UTC offset.
+        note:
+          type: [string, 'null']
+          maxLength: 500
+    LoanEntry:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - debtor
+        - amountMinor
+        - occurredAt
+        - note
+        - version
+        - updatedAt
+        - deletedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        debtor:
+          $ref: '#/components/schemas/MemberKey'
+        amountMinor:
+          type: integer
+          minimum: 100
+          maximum: 99999999999
+          multipleOf: 100
         occurredAt:
           type: string
           format: date-time
@@ -503,10 +661,12 @@ components:
       additionalProperties: false
       required: [mutationId, entityId, operation, baseVersion]
       description: >-
-        CREATE requires baseVersion 0 and ExpenseInput. UPDATE requires a positive
-        baseVersion and ExpenseInput. DELETE requires a positive baseVersion and
-        no expense. Operation-specific invalid data is returned as a REJECTED
-        result so valid siblings can still apply.
+        entityType selects which payload key is required, and defaults to
+        EXPENSE. CREATE requires baseVersion 0; UPDATE and DELETE require a
+        positive baseVersion. CREATE and UPDATE require the matching payload
+        (expense, period, or loan); DELETE requires no payload. A PERIOD DELETE
+        is always rejected. Operation-specific invalid data is returned as a
+        REJECTED result so valid siblings can still apply.
       properties:
         mutationId:
           type: string
@@ -515,7 +675,9 @@ components:
         entityId:
           type: string
           format: uuid
-          description: Client-generated expense UUID.
+          description: Client-generated UUID of the expense, period, or loan.
+        entityType:
+          $ref: '#/components/schemas/EntityType'
         operation:
           $ref: '#/components/schemas/MutationOperation'
         baseVersion:
@@ -524,6 +686,10 @@ components:
           maximum: 2147483646
         expense:
           $ref: '#/components/schemas/ExpenseInput'
+        period:
+          $ref: '#/components/schemas/PeriodInput'
+        loan:
+          $ref: '#/components/schemas/LoanInput'
     MutationBatchRequest:
       type: object
       additionalProperties: false
@@ -538,7 +704,9 @@ components:
     AppliedMutationResult:
       type: object
       additionalProperties: false
-      required: [mutationId, status, expense]
+      required: [mutationId, status, entityType]
+      description: >-
+        Exactly one payload key is present, selected by entityType.
       properties:
         mutationId:
           type: string
@@ -546,12 +714,21 @@ components:
         status:
           type: string
           const: APPLIED
+        entityType:
+          $ref: '#/components/schemas/EntityType'
         expense:
           $ref: '#/components/schemas/Expense'
+        period:
+          $ref: '#/components/schemas/SpendingPeriod'
+        loan:
+          $ref: '#/components/schemas/LoanEntry'
     ConflictMutationResult:
       type: object
       additionalProperties: false
-      required: [mutationId, status, code, expense]
+      required: [mutationId, status, entityType, code]
+      description: >-
+        Carries the authoritative server state. Exactly one payload key is
+        present, selected by entityType.
       properties:
         mutationId:
           type: string
@@ -559,11 +736,17 @@ components:
         status:
           type: string
           const: CONFLICT
+        entityType:
+          $ref: '#/components/schemas/EntityType'
         code:
           type: string
           enum: [ENTITY_EXISTS, VERSION_CONFLICT]
         expense:
           $ref: '#/components/schemas/Expense'
+        period:
+          $ref: '#/components/schemas/SpendingPeriod'
+        loan:
+          $ref: '#/components/schemas/LoanEntry'
     RejectedMutationResult:
       type: object
       additionalProperties: false
@@ -583,6 +766,8 @@ components:
             - IDEMPOTENCY_KEY_REUSED
             - INVALID_MUTATION
             - PAYER_NOT_FOUND
+            - PERIOD_ALREADY_OPEN
+            - PERIOD_NOT_FOUND
         details:
           type: array
           items:
@@ -607,16 +792,18 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MutationResult'
-    ExpenseChange:
+    EntityChange:
       type: object
       additionalProperties: false
-      required: [cursor, entityType, operation, originMutationId, expense]
+      required: [cursor, entityType, operation, originMutationId]
+      description: >-
+        One synchronized change. Exactly one payload key is present, selected by
+        entityType. PERIOD changes are never DELETED.
       properties:
         cursor:
           type: string
         entityType:
-          type: string
-          const: EXPENSE
+          $ref: '#/components/schemas/EntityType'
         operation:
           type: string
           enum: [CREATED, UPDATED, DELETED]
@@ -625,6 +812,10 @@ components:
           format: uuid
         expense:
           $ref: '#/components/schemas/Expense'
+        period:
+          $ref: '#/components/schemas/SpendingPeriod'
+        loan:
+          $ref: '#/components/schemas/LoanEntry'
     ChangePage:
       type: object
       additionalProperties: false
@@ -633,12 +824,28 @@ components:
         changes:
           type: array
           items:
-            $ref: '#/components/schemas/ExpenseChange'
+            $ref: '#/components/schemas/EntityChange'
         nextCursor:
           type: string
           description: Persist only after every change in this page is applied transactionally.
         hasMore:
           type: boolean
+    BootstrapItem:
+      type: object
+      additionalProperties: false
+      required: [entityType]
+      description: >-
+        One canonical entity. Exactly one payload key is present, selected by
+        entityType.
+      properties:
+        entityType:
+          $ref: '#/components/schemas/EntityType'
+        expense:
+          $ref: '#/components/schemas/Expense'
+        period:
+          $ref: '#/components/schemas/SpendingPeriod'
+        loan:
+          $ref: '#/components/schemas/LoanEntry'
     BootstrapPage:
       type: object
       additionalProperties: false
@@ -647,7 +854,7 @@ components:
         items:
           type: array
           items:
-            $ref: '#/components/schemas/Expense'
+            $ref: '#/components/schemas/BootstrapItem'
         watermarkCursor:
           type: string
         nextPageToken:

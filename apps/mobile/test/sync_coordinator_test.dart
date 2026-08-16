@@ -5,7 +5,10 @@ import 'package:houseexpenses/src/data/local/app_database.dart';
 import 'package:houseexpenses/src/data/remote/api_models.dart';
 import 'package:houseexpenses/src/data/remote/http_transport.dart';
 import 'package:houseexpenses/src/data/repositories/expense_repository.dart';
+import 'package:houseexpenses/src/data/repositories/loan_repository.dart';
+import 'package:houseexpenses/src/data/repositories/period_repository.dart';
 import 'package:houseexpenses/src/domain/expense.dart';
+import 'package:houseexpenses/src/domain/loan.dart';
 
 import 'support/fakes.dart';
 
@@ -35,11 +38,7 @@ void main() {
           final result = receipts.putIfAbsent(mutation.mutationId, () {
             final expense = expenseFromCandidate(mutation, updatedAt: now);
             serverExpenses[expense.id] = expense;
-            return MutationResultDto(
-              mutationId: mutation.mutationId,
-              status: MutationResultStatus.applied,
-              expense: expense,
-            );
+            return appliedResult(mutation.mutationId, expenseSnapshot(expense));
           });
           results.add(result);
         }
@@ -58,7 +57,7 @@ void main() {
     addTearDown(coordinator.close);
     await repository.create(
       ExpenseDraft(
-        amountMinor: 999,
+        amountMinor: 90000,
         category: ExpenseCategory.transport,
         payer: HouseholdMember.sumon,
         occurredAt: DateTime.utc(2026, 8, 13),
@@ -98,10 +97,9 @@ void main() {
     final mutation =
         (await database.select(database.outboxMutations).get()).single;
     blocking.result.complete(<MutationResultDto>[
-      MutationResultDto(
-        mutationId: mutation.mutationId,
-        status: MutationResultStatus.applied,
-        expense: remoteExpense(id: local.id, amountMinor: 500),
+      appliedResult(
+        mutation.mutationId,
+        expenseSnapshot(remoteExpense(id: local.id, amountMinor: 500)),
       ),
     ]);
 
@@ -129,7 +127,7 @@ void main() {
               ChangeDto(
                 cursor: 'cursor-1',
                 originMutationId: '10000000-0000-4000-8000-000000000001',
-                expense: firstExpense,
+                snapshot: expenseSnapshot(firstExpense),
               ),
             ],
             nextCursor: 'cursor-1',
@@ -140,7 +138,7 @@ void main() {
               ChangeDto(
                 cursor: 'cursor-2',
                 originMutationId: '10000000-0000-4000-8000-000000000002',
-                expense: secondExpense,
+                snapshot: expenseSnapshot(secondExpense),
               ),
             ],
             nextCursor: 'cursor-2',
@@ -173,7 +171,7 @@ void main() {
       final api = FakeExpenseSyncApi(
         bootstrapPages: <BootstrapPageDto>[
           BootstrapPageDto(
-            items: <ExpenseDto>[active],
+            items: <BootstrapItemDto>[expenseSnapshot(active)],
             watermarkCursor: 'cursor-1',
             nextPageToken: null,
             hasMore: false,
@@ -185,7 +183,7 @@ void main() {
               ChangeDto(
                 cursor: 'cursor-2',
                 originMutationId: '10000000-0000-4000-8000-000000000003',
-                expense: deleted,
+                snapshot: expenseSnapshot(deleted),
               ),
             ],
             nextCursor: 'cursor-2',
@@ -210,11 +208,11 @@ void main() {
     final api = FakeExpenseSyncApi(
       pushHandler: (mutations) async => mutations
           .map(
-            (mutation) => MutationResultDto(
-              mutationId: mutation.mutationId,
+            (mutation) => appliedResult(
+              mutation.mutationId,
+              expenseSnapshot(authoritative),
               status: MutationResultStatus.conflict,
               code: 'ENTITY_EXISTS',
-              expense: authoritative,
             ),
           )
           .toList(growable: false),
@@ -246,6 +244,261 @@ void main() {
     expect(stored.version, 4);
     expect(stored.syncState, LocalSyncState.synced);
     expect(notice.kind, SyncNoticeKind.conflict);
+    expect(notice.entityType, SyncEntityType.expense);
+    expect(notice.message, contains('expense'));
     expect(await database.select(database.outboxMutations).get(), isEmpty);
+  });
+
+  test('bootstrap files an expense into the period that precedes it', () async {
+    const periodId = '20000000-0000-4000-8000-000000000001';
+    const expenseId = '00000000-0000-4000-8000-000000000010';
+    const loanId = '30000000-0000-4000-8000-000000000001';
+    final api = FakeExpenseSyncApi(
+      bootstrapPages: <BootstrapPageDto>[
+        BootstrapPageDto(
+          // The server pages PERIOD before EXPENSE before LOAN, so the expense
+          // never names a period this device has not stored yet.
+          items: <BootstrapItemDto>[
+            periodSnapshot(remotePeriod(id: periodId, sequenceNumber: 1)),
+            expenseSnapshot(
+              remoteExpense(
+                id: expenseId,
+                amountMinor: 80000,
+                periodId: periodId,
+              ),
+            ),
+            loanSnapshot(remoteLoan(id: loanId, amountMinor: 50000)),
+          ],
+          watermarkCursor: 'cursor-1',
+          nextPageToken: null,
+          hasMore: false,
+        ),
+      ],
+    );
+    final coordinator = SyncCoordinator(database: database, api: api);
+    addTearDown(coordinator.close);
+
+    expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+
+    expect((await database.readOpenPeriodRow())!.id, periodId);
+    expect((await repository.readVisibleExpenses()).single.periodId, periodId);
+    expect((await database.readVisibleLoanRows()).single.id, loanId);
+  });
+
+  test('closing a period pushes the close ahead of the next open', () async {
+    const periodId = '20000000-0000-4000-8000-000000000002';
+    final api = FakeExpenseSyncApi(
+      bootstrapPages: <BootstrapPageDto>[
+        BootstrapPageDto(
+          items: <BootstrapItemDto>[
+            periodSnapshot(remotePeriod(id: periodId, sequenceNumber: 1)),
+          ],
+          watermarkCursor: 'cursor-1',
+          nextPageToken: null,
+          hasMore: false,
+        ),
+      ],
+    );
+    api.serverEntities[periodId] = periodSnapshot(
+      remotePeriod(id: periodId, sequenceNumber: 1),
+    );
+    final coordinator = SyncCoordinator(database: database, api: api);
+    addTearDown(coordinator.close);
+    final periods = DriftPeriodRepository(database);
+    addTearDown(periods.close);
+
+    // The first sync brings the open period down; only then can it be closed.
+    expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+    final rollover = await periods.closeAndOpenNext();
+    expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+
+    expect(
+      api.pushedCandidates.map((candidate) => candidate.entityType),
+      everyElement(SyncEntityType.period),
+    );
+    expect(
+      api.pushedCandidates.map((candidate) => candidate.operation).toList(),
+      <MutationOperation>[MutationOperation.update, MutationOperation.create],
+    );
+    expect(await database.select(database.outboxMutations).get(), isEmpty);
+
+    final closed = await database.findPeriodRow(rollover.closed.id);
+    expect(closed!.closedAt, isNotNull);
+    expect(closed.version, 2);
+    expect(closed.syncState, LocalSyncState.synced.storedName);
+    final open = await database.readOpenPeriodRow();
+    expect(open!.id, rollover.opened.id);
+    expect(open.sequenceNumber, 2);
+    expect(open.version, 1);
+  });
+
+  test('a close made on another device converges on this one', () async {
+    const firstPeriod = '20000000-0000-4000-8000-000000000003';
+    const secondPeriod = '20000000-0000-4000-8000-000000000004';
+    final closedAt = DateTime.utc(2026, 8, 14, 10);
+    final api = FakeExpenseSyncApi(
+      bootstrapPages: <BootstrapPageDto>[
+        BootstrapPageDto(
+          items: <BootstrapItemDto>[
+            periodSnapshot(remotePeriod(id: firstPeriod, sequenceNumber: 1)),
+          ],
+          watermarkCursor: 'cursor-1',
+          nextPageToken: null,
+          hasMore: false,
+        ),
+      ],
+      changePages: <ChangePageDto>[
+        ChangePageDto(
+          changes: <ChangeDto>[
+            ChangeDto(
+              cursor: 'cursor-2',
+              originMutationId: '10000000-0000-4000-8000-000000000004',
+              snapshot: periodSnapshot(
+                remotePeriod(
+                  id: firstPeriod,
+                  sequenceNumber: 1,
+                  version: 2,
+                  closedAt: closedAt,
+                ),
+              ),
+            ),
+            ChangeDto(
+              cursor: 'cursor-3',
+              originMutationId: '10000000-0000-4000-8000-000000000005',
+              snapshot: periodSnapshot(
+                remotePeriod(
+                  id: secondPeriod,
+                  sequenceNumber: 2,
+                  startedAt: closedAt,
+                ),
+              ),
+            ),
+          ],
+          nextCursor: 'cursor-3',
+          hasMore: false,
+        ),
+      ],
+    );
+    final coordinator = SyncCoordinator(database: database, api: api);
+    addTearDown(coordinator.close);
+
+    expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+
+    expect((await database.readOpenPeriodRow())!.id, secondPeriod);
+    // The settled period stays on the device so History can still show it. The
+    // raw row hands back a local-zone instant, which the mappers normalize.
+    expect(
+      (await database.findPeriodRow(firstPeriod))!.closedAt!.toUtc(),
+      closedAt,
+    );
+    expect(await database.readPeriodRows(), hasLength(2));
+  });
+
+  test('a local loan delete round-trips as a tombstone', () async {
+    final loans = DriftLoanRepository(database);
+    addTearDown(loans.close);
+    final coordinator = SyncCoordinator(
+      database: database,
+      api: FakeExpenseSyncApi(),
+    );
+    addTearDown(coordinator.close);
+    final loan = await loans.create(
+      const LoanDraft(
+        debtor: HouseholdMember.ebrahim,
+        amountMinor: 50000,
+        note: 'Rickshaw fare',
+      ),
+    );
+
+    expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+    expect((await loans.readVisibleLoans()).single.version, 1);
+
+    await loans.delete(loan.id);
+    expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+
+    expect(await loans.readVisibleLoans(), isEmpty);
+    final stored = await database.findLoanRow(loan.id);
+    expect(stored!.deletedAt, isNotNull);
+    expect(stored.version, 2);
+    expect(await database.select(database.outboxMutations).get(), isEmpty);
+  });
+
+  test('a remote loan tombstone hides the entry but keeps the row', () async {
+    const id = '30000000-0000-4000-8000-000000000002';
+    final api = FakeExpenseSyncApi(
+      bootstrapPages: <BootstrapPageDto>[
+        BootstrapPageDto(
+          items: <BootstrapItemDto>[
+            loanSnapshot(remoteLoan(id: id, amountMinor: 30000)),
+          ],
+          watermarkCursor: 'cursor-1',
+          nextPageToken: null,
+          hasMore: false,
+        ),
+      ],
+      changePages: <ChangePageDto>[
+        ChangePageDto(
+          changes: <ChangeDto>[
+            ChangeDto(
+              cursor: 'cursor-2',
+              originMutationId: '10000000-0000-4000-8000-000000000006',
+              snapshot: loanSnapshot(
+                remoteLoan(
+                  id: id,
+                  amountMinor: 30000,
+                  version: 2,
+                  deletedAt: DateTime.utc(2026, 8, 14, 11),
+                ),
+              ),
+            ),
+          ],
+          nextCursor: 'cursor-2',
+          hasMore: false,
+        ),
+      ],
+    );
+    final coordinator = SyncCoordinator(database: database, api: api);
+    addTearDown(coordinator.close);
+
+    await coordinator.synchronize();
+
+    expect(await database.readVisibleLoanRows(), isEmpty);
+    final stored = await database.findLoanRow(id);
+    expect(stored!.deletedAt, isNotNull);
+    expect(stored.version, 2);
+  });
+
+  test('a rejected loan is flagged on the entry the member sees', () async {
+    final loans = DriftLoanRepository(database);
+    addTearDown(loans.close);
+    final api = FakeExpenseSyncApi(
+      pushHandler: (mutations) async => mutations
+          .map(
+            (mutation) => MutationResultDto(
+              mutationId: mutation.mutationId,
+              status: MutationResultStatus.rejected,
+              entityType: mutation.entityType,
+              code: 'VALIDATION_FAILED',
+            ),
+          )
+          .toList(growable: false),
+    );
+    final coordinator = SyncCoordinator(database: database, api: api);
+    addTearDown(coordinator.close);
+    final loan = await loans.create(
+      const LoanDraft(debtor: HouseholdMember.sumon, amountMinor: 20000),
+    );
+    final noticeFuture = coordinator.notices.first;
+
+    await coordinator.synchronize();
+    final notice = await noticeFuture;
+
+    expect(notice.entityType, SyncEntityType.loan);
+    expect(notice.entityId, loan.id);
+    expect(notice.kind, SyncNoticeKind.permanentFailure);
+    expect(
+      (await database.findLoanRow(loan.id))!.syncState,
+      LocalSyncState.needsAttention.storedName,
+    );
   });
 }

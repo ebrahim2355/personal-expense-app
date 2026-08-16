@@ -73,18 +73,18 @@ final class _ExpenseFormScreenState extends ConsumerState<ExpenseFormScreen> {
                 key: const Key('amount-field'),
                 controller: _amountController,
                 autofocus: !_isEditing,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
+                // Whole taka only, so the field refuses a decimal point outright
+                // rather than validating one away after the fact.
+                keyboardType: TextInputType.number,
                 textInputAction: TextInputAction.next,
                 inputFormatters: <TextInputFormatter>[
-                  FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
-                  LengthLimitingTextInputFormatter(13),
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(9),
                 ],
                 decoration: const InputDecoration(
                   labelText: 'Amount',
                   prefixText: '৳ ',
-                  helperText: 'BDT, up to two decimal places',
+                  helperText: 'Whole taka only',
                 ),
                 validator: (value) {
                   try {

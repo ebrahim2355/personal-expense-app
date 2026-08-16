@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/expense.dart';
 import '../domain/money.dart';
+import '../domain/spending_period.dart';
 import '../providers.dart';
 import 'common_widgets.dart';
 import 'presentation_providers.dart';
@@ -14,8 +15,8 @@ final class DashboardScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final range = ref.watch(dashboardRangeProvider);
     final expenses = ref.watch(visibleExpensesProvider);
+    final openPeriod = ref.watch(openPeriodProvider);
 
     return expenses.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -23,9 +24,14 @@ final class DashboardScreen extends ConsumerWidget {
         onRetry: () => ref.invalidate(visibleExpensesProvider),
       ),
       data: (allExpenses) {
-        final selected = allExpenses
-            .where((expense) => range.contains(expense.occurredAt))
-            .toList(growable: false);
+        final period = openPeriod.valueOrNull;
+        // The dashboard is the open period, not a calendar month. Before the
+        // first sync there is no period yet, and nothing has been filed into one.
+        final selected = period == null
+            ? const <Expense>[]
+            : allExpenses
+                  .where((expense) => expense.periodId == period.id)
+                  .toList(growable: false);
         final summary = summarizeExpenses(selected);
         final recent = selected.take(5).toList(growable: false);
         return RefreshIndicator(
@@ -37,18 +43,7 @@ final class DashboardScreen extends ConsumerWidget {
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 120),
             children: <Widget>[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: DateRangeButton(
-                  range: range,
-                  onPressed: () async {
-                    final next = await pickExpenseDateRange(context, range);
-                    if (next != null) {
-                      ref.read(dashboardRangeProvider.notifier).state = next;
-                    }
-                  },
-                ),
-              ),
+              _PeriodHeader(period: period, expenseCount: selected.length),
               const SizedBox(height: 12),
               _TotalCard(summary: summary),
               const SizedBox(height: 12),
@@ -84,6 +79,8 @@ final class DashboardScreen extends ConsumerWidget {
                 },
               ),
               const SizedBox(height: 12),
+              _SettleUpCard(period: period, summary: summary),
+              const SizedBox(height: 12),
               const SyncStatusCard(),
               const SizedBox(height: 24),
               Row(
@@ -94,7 +91,10 @@ final class DashboardScreen extends ConsumerWidget {
                       style: Theme.of(context).textTheme.titleLarge,
                     ),
                   ),
-                  Text('${selected.length} in range'),
+                  Text(
+                    '${selected.length} in this period',
+                    key: const Key('dashboard-count'),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
@@ -111,6 +111,41 @@ final class DashboardScreen extends ConsumerWidget {
           ),
         );
       },
+    );
+  }
+}
+
+final class _PeriodHeader extends StatelessWidget {
+  const _PeriodHeader({required this.period, required this.expenseCount});
+
+  final SpendingPeriod? period;
+  final int expenseCount;
+
+  @override
+  Widget build(BuildContext context) {
+    final period = this.period;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Row(
+        children: <Widget>[
+          Icon(
+            Icons.timelapse_outlined,
+            size: 18,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              period == null
+                  ? 'No spending period yet'
+                  : '${period.displayName} · open since '
+                        '${dhakaDate(period.startedAt)}',
+              key: const Key('dashboard-period-label'),
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -177,9 +212,108 @@ final class _SettlementCard extends StatelessWidget {
           style: Theme.of(context).textTheme.titleMedium
               ?.copyWith(fontWeight: FontWeight.w700),
         ),
-        subtitle: const Text('Based on the selected range and equal shares'),
+        subtitle: const Text(
+          'Shared expenses in this period, split equally. '
+          'Loans are tracked separately.',
+        ),
       ),
     );
+  }
+}
+
+/// Closing a period is the only way the dashboard resets, so the action lives
+/// beside the figure the members are settling.
+final class _SettleUpCard extends ConsumerStatefulWidget {
+  const _SettleUpCard({required this.period, required this.summary});
+
+  final SpendingPeriod? period;
+  final ExpenseSummary summary;
+
+  @override
+  ConsumerState<_SettleUpCard> createState() => _SettleUpCardState();
+}
+
+final class _SettleUpCardState extends ConsumerState<_SettleUpCard> {
+  bool _closing = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final period = widget.period;
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              'Settled up?',
+              style: Theme.of(context).textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Close this period once the balance is paid. History keeps it, '
+              'and a fresh period opens straight away.',
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.tonalIcon(
+                key: const Key('close-period-button'),
+                onPressed: period == null || _closing ? null : _close,
+                icon: _closing
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.event_available_outlined),
+                label: Text(_closing ? 'Closing…' : 'Close period'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _close() async {
+    final period = widget.period;
+    if (period == null || _closing) {
+      return;
+    }
+    final confirmed = await confirmPeriodClose(
+      context,
+      period: period,
+      summary: widget.summary,
+    );
+    if (!confirmed || !mounted) {
+      return;
+    }
+    setState(() => _closing = true);
+    try {
+      final rollover = await ref
+          .read(periodRepositoryProvider)
+          .closeAndOpenNext();
+      if (mounted) {
+        setState(() => _closing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '${period.displayName} closed. '
+              '${rollover.opened.displayName} is now open.',
+            ),
+          ),
+        );
+      }
+    } on Object {
+      if (mounted) {
+        setState(() => _closing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not close this period.')),
+        );
+      }
+    }
   }
 }
 
@@ -257,7 +391,7 @@ final class _EmptyDashboard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              'No expenses in this range',
+              'No expenses in this period',
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 4),

@@ -4,6 +4,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../application/sync_coordinator.dart';
 import '../domain/dhaka_time.dart';
 import '../domain/expense.dart';
+import '../domain/loan.dart';
+import '../domain/money.dart';
 import '../domain/session.dart';
 import '../providers.dart';
 
@@ -42,14 +44,14 @@ final unresolvedMutationCountProvider = StreamProvider<int>((ref) {
   return ref.watch(appDatabaseProvider).watchUnresolvedMutationCount();
 });
 
-final dashboardRangeProvider = StateProvider<ExpenseDateRange>((ref) {
-  return DhakaTime.initialize().currentMonth(ref.watch(clockProvider)());
+/// History starts unfiltered: search reaches every period, closed ones included,
+/// and the member narrows it down from there.
+final historyFilterProvider = StateProvider<HistoryFilter>((ref) {
+  return const HistoryFilter();
 });
 
-final historyFilterProvider = StateProvider<HistoryFilter>((ref) {
-  return HistoryFilter(
-    range: DhakaTime.initialize().currentMonth(ref.watch(clockProvider)()),
-  );
+final loanFilterProvider = StateProvider<LoanFilter>((ref) {
+  return const LoanFilter();
 });
 
 final apiEnvironmentLabelProvider = Provider<String>((ref) {
@@ -69,31 +71,102 @@ final manualSyncControllerProvider =
     });
 
 final class HistoryFilter {
-  const HistoryFilter({required this.range, this.payer, this.category});
+  const HistoryFilter({
+    this.range,
+    this.periodId,
+    this.payer,
+    this.category,
+    this.query = '',
+  });
 
-  final ExpenseDateRange range;
+  /// Null means every date. The dashboard no longer picks a range, so history is
+  /// the only place a range narrows anything.
+  final ExpenseDateRange? range;
+
+  /// Null means every period, open and closed alike.
+  final String? periodId;
   final HouseholdMember? payer;
   final ExpenseCategory? category;
 
+  /// One search box over amount, note, category and payer.
+  final String query;
+
   HistoryFilter copyWith({
     ExpenseDateRange? range,
+    bool clearRange = false,
+    String? periodId,
+    bool clearPeriod = false,
     HouseholdMember? payer,
     bool clearPayer = false,
     ExpenseCategory? category,
     bool clearCategory = false,
+    String? query,
   }) {
     return HistoryFilter(
-      range: range ?? this.range,
+      range: clearRange ? null : range ?? this.range,
+      periodId: clearPeriod ? null : periodId ?? this.periodId,
       payer: clearPayer ? null : payer ?? this.payer,
       category: clearCategory ? null : category ?? this.category,
+      query: query ?? this.query,
     );
   }
 
   bool includes(Expense expense) {
-    return range.contains(expense.occurredAt) &&
+    final range = this.range;
+    return (range == null || range.contains(expense.occurredAt)) &&
+        (periodId == null || expense.periodId == periodId) &&
         (payer == null || expense.payer == payer) &&
-        (category == null || expense.category == category);
+        (category == null || expense.category == category) &&
+        _matchesSearch(query, <String?>[
+          formatBdtInput(expense.amountMinor),
+          formatBdt(expense.amountMinor),
+          expense.category.displayName,
+          expense.payer.displayName,
+          expense.note,
+        ]);
   }
+}
+
+final class LoanFilter {
+  const LoanFilter({this.debtor, this.query = ''});
+
+  final HouseholdMember? debtor;
+  final String query;
+
+  LoanFilter copyWith({
+    HouseholdMember? debtor,
+    bool clearDebtor = false,
+    String? query,
+  }) {
+    return LoanFilter(
+      debtor: clearDebtor ? null : debtor ?? this.debtor,
+      query: query ?? this.query,
+    );
+  }
+
+  bool includes(Loan loan) {
+    return (debtor == null || loan.debtor == debtor) &&
+        _matchesSearch(query, <String?>[
+          formatBdtInput(loan.amountMinor),
+          formatBdt(loan.amountMinor),
+          loan.debtor.displayName,
+          loan.creditor.displayName,
+          loan.note,
+        ]);
+  }
+}
+
+/// Case-insensitive substring search over the fields a member would think to
+/// type. Both the grouped and bare amount are offered, so `1,200` and `1200`
+/// find the same entry.
+bool _matchesSearch(String query, List<String?> fields) {
+  final needle = query.trim().toLowerCase();
+  if (needle.isEmpty) {
+    return true;
+  }
+  return fields.any(
+    (field) => field != null && field.toLowerCase().contains(needle),
+  );
 }
 
 final class ManualSyncState {

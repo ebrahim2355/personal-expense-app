@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   const adapter = new PrismaPg({ connectionString: testDatabaseUrl });
   const prisma = new PrismaClient({ adapter });
   try {
-    await prisma.$executeRaw`TRUNCATE TABLE "ProcessedMutation", "ExpenseChange", "Expense", "RefreshToken", "Member", "Household" RESTART IDENTITY CASCADE`;
+    await prisma.$executeRaw`TRUNCATE TABLE "ProcessedMutation", "ExpenseChange", "Expense", "LoanEntry", "SpendingPeriod", "RefreshToken", "Member", "Household" RESTART IDENTITY CASCADE`;
     process.stdout.write(
       `Dedicated test database ${decodeURIComponent(url.pathname.slice(1))} reset.\n`,
     );

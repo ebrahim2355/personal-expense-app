@@ -13,6 +13,9 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+    # Drift emits the historical schemas used by the migration test as raw
+    # `TableInfo` subclasses, which strict-raw-types flags in code nobody edits.
+    - test/generated/**
 
 linter:
   rules:

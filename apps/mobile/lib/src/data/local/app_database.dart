@@ -11,6 +11,44 @@ class LocalExpenses extends Table {
   TextColumn get payer => text()();
   DateTimeColumn get occurredAt => dateTime()();
   TextColumn get note => text().nullable()();
+
+  /// Nullable, unlike the server column. An expense recorded before the first
+  /// bootstrap has no period to name yet; the wire payload omits it and the
+  /// server files the expense into whichever period is open.
+  TextColumn get periodId => text().nullable()();
+  IntColumn get version => integer()();
+  DateTimeColumn get updatedAt => dateTime()();
+  DateTimeColumn get deletedAt => dateTime().nullable()();
+  TextColumn get syncState => text()();
+  DateTimeColumn get localModifiedAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{id};
+}
+
+@DataClassName('LocalPeriodRow')
+class LocalPeriods extends Table {
+  TextColumn get id => text()();
+  IntColumn get sequenceNumber => integer()();
+  DateTimeColumn get startedAt => dateTime()();
+  DateTimeColumn get closedAt => dateTime().nullable()();
+  TextColumn get note => text().nullable()();
+  IntColumn get version => integer()();
+  DateTimeColumn get updatedAt => dateTime()();
+  TextColumn get syncState => text()();
+  DateTimeColumn get localModifiedAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => <Column<Object>>{id};
+}
+
+@DataClassName('LocalLoanRow')
+class LocalLoans extends Table {
+  TextColumn get id => text()();
+  TextColumn get debtor => text()();
+  IntColumn get amountMinor => integer()();
+  DateTimeColumn get occurredAt => dateTime()();
+  TextColumn get note => text().nullable()();
   IntColumn get version => integer()();
   DateTimeColumn get updatedAt => dateTime()();
   DateTimeColumn get deletedAt => dateTime().nullable()();
@@ -26,6 +64,11 @@ class OutboxMutations extends Table {
   IntColumn get localSequence => integer().autoIncrement()();
   TextColumn get mutationId => text().unique()();
   TextColumn get entityId => text()();
+
+  /// Which table [entityId] points at. Defaulted so rows queued by an older
+  /// build, when the outbox only ever carried expenses, still replay correctly.
+  TextColumn get entityType =>
+      text().withDefault(const Constant<String>('EXPENSE'))();
   TextColumn get action => text()();
   IntColumn get baseVersion => integer()();
   TextColumn get payloadJson => text().nullable()();
@@ -53,7 +96,15 @@ class SyncMetadata extends Table {
   Set<Column<Object>> get primaryKey => <Column<Object>>{singletonId};
 }
 
-@DriftDatabase(tables: <Type>[LocalExpenses, OutboxMutations, SyncMetadata])
+@DriftDatabase(
+  tables: <Type>[
+    LocalExpenses,
+    LocalPeriods,
+    LocalLoans,
+    OutboxMutations,
+    SyncMetadata,
+  ],
+)
 final class AppDatabase extends _$AppDatabase {
   AppDatabase(super.executor);
 
@@ -66,7 +117,7 @@ final class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -86,8 +137,17 @@ final class AppDatabase extends _$AppDatabase {
           syncMetadata.lastSuccessfulSyncAt,
         );
       }
+      if (from < 3) {
+        // Spending periods and the lending ledger arrive together. Existing
+        // expenses keep a null periodId: the next bootstrap stamps them, and
+        // until then their replayed mutations let the server choose the period.
+        await migrator.createTable(localPeriods);
+        await migrator.createTable(localLoans);
+        await migrator.addColumn(localExpenses, localExpenses.periodId);
+        await migrator.addColumn(outboxMutations, outboxMutations.entityType);
+      }
       // Every future schema version must add an explicit, tested migration.
-      if (to > 2) {
+      if (to > 3) {
         throw StateError('Missing database migration from $from to $to.');
       }
     },
@@ -119,6 +179,85 @@ final class AppDatabase extends _$AppDatabase {
   Future<LocalExpenseRow?> findExpenseRow(String id) {
     return (select(
       localExpenses,
+    )..where((row) => row.id.equals(id))).getSingleOrNull();
+  }
+
+  /// Newest period first, so the open one leads the list.
+  Stream<List<LocalPeriodRow>> watchPeriodRows() {
+    final query = select(localPeriods)
+      ..orderBy(<OrderingTerm Function(LocalPeriods)>[
+        (row) => OrderingTerm.desc(row.sequenceNumber),
+      ]);
+    return query.watch();
+  }
+
+  Future<List<LocalPeriodRow>> readPeriodRows() {
+    final query = select(localPeriods)
+      ..orderBy(<OrderingTerm Function(LocalPeriods)>[
+        (row) => OrderingTerm.desc(row.sequenceNumber),
+      ]);
+    return query.get();
+  }
+
+  /// The single period the household is currently spending against, or null
+  /// before the first bootstrap has delivered one.
+  Stream<LocalPeriodRow?> watchOpenPeriodRow() {
+    final query = select(localPeriods)
+      ..where((row) => row.closedAt.isNull())
+      ..orderBy(<OrderingTerm Function(LocalPeriods)>[
+        (row) => OrderingTerm.desc(row.sequenceNumber),
+      ])
+      ..limit(1);
+    return query.watchSingleOrNull();
+  }
+
+  Future<LocalPeriodRow?> readOpenPeriodRow() {
+    final query = select(localPeriods)
+      ..where((row) => row.closedAt.isNull())
+      ..orderBy(<OrderingTerm Function(LocalPeriods)>[
+        (row) => OrderingTerm.desc(row.sequenceNumber),
+      ])
+      ..limit(1);
+    return query.getSingleOrNull();
+  }
+
+  Future<LocalPeriodRow?> findPeriodRow(String id) {
+    return (select(
+      localPeriods,
+    )..where((row) => row.id.equals(id))).getSingleOrNull();
+  }
+
+  Future<int?> readHighestPeriodSequenceNumber() async {
+    final highest = localPeriods.sequenceNumber.max();
+    final row = await (selectOnly(
+      localPeriods,
+    )..addColumns(<Expression<Object>>[highest])).getSingle();
+    return row.read(highest);
+  }
+
+  Stream<List<LocalLoanRow>> watchVisibleLoanRows() {
+    final query = select(localLoans)
+      ..where((row) => row.deletedAt.isNull())
+      ..orderBy(<OrderingTerm Function(LocalLoans)>[
+        (row) => OrderingTerm.desc(row.occurredAt),
+        (row) => OrderingTerm.desc(row.updatedAt),
+      ]);
+    return query.watch();
+  }
+
+  Future<List<LocalLoanRow>> readVisibleLoanRows() {
+    final query = select(localLoans)
+      ..where((row) => row.deletedAt.isNull())
+      ..orderBy(<OrderingTerm Function(LocalLoans)>[
+        (row) => OrderingTerm.desc(row.occurredAt),
+        (row) => OrderingTerm.desc(row.updatedAt),
+      ]);
+    return query.get();
+  }
+
+  Future<LocalLoanRow?> findLoanRow(String id) {
+    return (select(
+      localLoans,
     )..where((row) => row.id.equals(id))).getSingleOrNull();
   }
 
