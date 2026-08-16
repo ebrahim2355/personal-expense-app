@@ -33,6 +33,12 @@ enum ChangeOperation {
   DELETED
 }
 
+enum SyncEntityType {
+  EXPENSE
+  PERIOD
+  LOAN
+}
+
 model Household {
   id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   slug               String              @unique @db.VarChar(64)
@@ -40,6 +46,8 @@ model Household {
   createdAt          DateTime            @default(now()) @db.Timestamptz(3)
   members            Member[]
   expenses           Expense[]
+  spendingPeriods    SpendingPeriod[]
+  loanEntries        LoanEntry[]
   processedMutations ProcessedMutation[]
   expenseChanges     ExpenseChange[]
 }
@@ -56,6 +64,7 @@ model Member {
   household          Household           @relation(fields: [householdId], references: [id], onDelete: Restrict)
   refreshTokens      RefreshToken[]
   paidExpenses       Expense[]
+  owedLoans          LoanEntry[]
   processedMutations ProcessedMutation[]
 
   @@unique([householdId, key])
@@ -82,25 +91,68 @@ model RefreshToken {
   @@index([expiresAt])
 }
 
+model SpendingPeriod {
+  id                 String    @id @db.Uuid
+  householdId        String    @db.Uuid
+  sequenceNumber     Int
+  startedAt          DateTime  @db.Timestamptz(3)
+  closedAt           DateTime? @db.Timestamptz(3)
+  note               String?   @db.VarChar(500)
+  version            Int       @default(1)
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime  @default(now()) @db.Timestamptz(3)
+  lastChangeSequence BigInt    @default(0) @db.BigInt
+  household          Household @relation(fields: [householdId], references: [id], onDelete: Restrict)
+  expenses           Expense[]
+
+  @@unique([householdId, id])
+  @@unique([householdId, sequenceNumber])
+  @@index([householdId, startedAt])
+  @@index([householdId, lastChangeSequence])
+}
+
+model LoanEntry {
+  id                 String    @id @db.Uuid
+  householdId        String    @db.Uuid
+  debtorId           String    @db.Uuid
+  amountMinor        BigInt    @db.BigInt
+  occurredAt         DateTime  @db.Timestamptz(3)
+  note               String?   @db.VarChar(500)
+  version            Int       @default(1)
+  createdAt          DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime  @default(now()) @db.Timestamptz(3)
+  deletedAt          DateTime? @db.Timestamptz(3)
+  lastChangeSequence BigInt    @default(0) @db.BigInt
+  household          Household @relation(fields: [householdId], references: [id], onDelete: Restrict)
+  debtor             Member    @relation(fields: [householdId, debtorId], references: [householdId, id], onDelete: Restrict)
+
+  @@index([householdId, occurredAt])
+  @@index([householdId, lastChangeSequence])
+  @@index([householdId, debtorId])
+}
+
 model Expense {
-  id                 String           @id @db.Uuid
-  householdId        String           @db.Uuid
-  amountMinor        BigInt           @db.BigInt
+  id                 String          @id @db.Uuid
+  householdId        String          @db.Uuid
+  amountMinor        BigInt          @db.BigInt
   category           ExpenseCategory
-  payerId            String           @db.Uuid
-  occurredAt         DateTime         @db.Timestamptz(3)
-  note               String?          @db.VarChar(500)
-  version            Int              @default(1)
-  createdAt          DateTime         @default(now()) @db.Timestamptz(3)
-  updatedAt          DateTime         @default(now()) @db.Timestamptz(3)
-  deletedAt          DateTime?        @db.Timestamptz(3)
-  lastChangeSequence BigInt           @default(0) @db.BigInt
-  household          Household        @relation(fields: [householdId], references: [id], onDelete: Restrict)
-  payer              Member           @relation(fields: [householdId, payerId], references: [householdId, id], onDelete: Restrict)
+  payerId            String          @db.Uuid
+  periodId           String          @db.Uuid
+  occurredAt         DateTime        @db.Timestamptz(3)
+  note               String?         @db.VarChar(500)
+  version            Int             @default(1)
+  createdAt          DateTime        @default(now()) @db.Timestamptz(3)
+  updatedAt          DateTime        @default(now()) @db.Timestamptz(3)
+  deletedAt          DateTime?       @db.Timestamptz(3)
+  lastChangeSequence BigInt          @default(0) @db.BigInt
+  household          Household       @relation(fields: [householdId], references: [id], onDelete: Restrict)
+  payer              Member          @relation(fields: [householdId, payerId], references: [householdId, id], onDelete: Restrict)
+  period             SpendingPeriod  @relation(fields: [householdId, periodId], references: [householdId, id], onDelete: Restrict)
 
   @@index([householdId, occurredAt])
   @@index([householdId, lastChangeSequence])
   @@index([householdId, payerId])
+  @@index([householdId, periodId])
 }
 
 model ProcessedMutation {
@@ -108,6 +160,7 @@ model ProcessedMutation {
   householdId String            @db.Uuid
   memberId    String            @db.Uuid
   entityId    String            @db.Uuid
+  entityType  SyncEntityType    @default(EXPENSE)
   operation   MutationOperation
   requestHash String            @db.Char(64)
   result      Json              @db.JsonB
@@ -119,10 +172,15 @@ model ProcessedMutation {
   @@index([householdId, entityId])
 }
 
+/// The ordered change feed for every synchronized entity, not only expenses.
+/// `entityType` selects which snapshot shape the `snapshot` document holds. The
+/// table keeps its original name so the careful backfill migration that
+/// rewrote its stored documents stays untouched.
 model ExpenseChange {
   sequence         BigInt          @id @default(autoincrement()) @db.BigInt
   householdId      String          @db.Uuid
   entityId         String          @db.Uuid
+  entityType       SyncEntityType  @default(EXPENSE)
   entityVersion    Int
   operation        ChangeOperation
   originMutationId String          @unique @db.Uuid
