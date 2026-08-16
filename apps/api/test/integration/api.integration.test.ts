@@ -12,6 +12,7 @@ import {
 } from '../../src/application/sync-service.js';
 import { createApp } from '../../src/app.js';
 import type { AppConfig } from '../../src/config/env.js';
+import { MAX_AMOUNT_MINOR } from '../../src/domain/constants.js';
 import type { AuthenticatedMember } from '../../src/domain/models.js';
 import { Prisma } from '../../src/generated/prisma/client.js';
 import { createLogger } from '../../src/infrastructure/logger.js';
@@ -72,17 +73,103 @@ const expenseSchema = z.object({
   payer: z.string(),
   occurredAt: z.string(),
   note: z.string().nullable(),
+  periodId: z.uuid(),
   version: z.number().int(),
   updatedAt: z.string(),
   deletedAt: z.string().nullable(),
 });
 
-const mutationResultSchema = z.object({
-  mutationId: z.uuid(),
-  status: z.enum(['APPLIED', 'CONFLICT', 'REJECTED']),
-  code: z.string().optional(),
-  expense: expenseSchema.optional(),
+const periodSchema = z.object({
+  id: z.uuid(),
+  sequenceNumber: z.number().int(),
+  startedAt: z.string(),
+  closedAt: z.string().nullable(),
+  note: z.string().nullable(),
+  version: z.number().int(),
+  updatedAt: z.string(),
 });
+
+const loanSchema = z.object({
+  id: z.uuid(),
+  debtor: z.enum(['SUMON', 'EBRAHIM']),
+  amountMinor: z.number().int(),
+  occurredAt: z.string(),
+  note: z.string().nullable(),
+  version: z.number().int(),
+  updatedAt: z.string(),
+  deletedAt: z.string().nullable(),
+});
+
+// Every payload-carrying response is discriminated on entityType, so a result
+// that names one entity and carries another's snapshot fails to parse instead of
+// quietly passing an assertion that only reads the key it expected.
+const entityPayloadSchema = z.discriminatedUnion('entityType', [
+  z.object({ entityType: z.literal('EXPENSE'), expense: expenseSchema }),
+  z.object({ entityType: z.literal('PERIOD'), period: periodSchema }),
+  z.object({ entityType: z.literal('LOAN'), loan: loanSchema }),
+]);
+
+const appliedShape = {
+  mutationId: z.uuid(),
+  status: z.literal('APPLIED'),
+} as const;
+
+const conflictShape = {
+  mutationId: z.uuid(),
+  status: z.literal('CONFLICT'),
+  code: z.enum(['ENTITY_EXISTS', 'VERSION_CONFLICT']),
+} as const;
+
+const mutationResultSchema = z.discriminatedUnion('status', [
+  z.discriminatedUnion('entityType', [
+    z.object({
+      ...appliedShape,
+      entityType: z.literal('EXPENSE'),
+      expense: expenseSchema,
+    }),
+    z.object({
+      ...appliedShape,
+      entityType: z.literal('PERIOD'),
+      period: periodSchema,
+    }),
+    z.object({
+      ...appliedShape,
+      entityType: z.literal('LOAN'),
+      loan: loanSchema,
+    }),
+  ]),
+  z.discriminatedUnion('entityType', [
+    z.object({
+      ...conflictShape,
+      entityType: z.literal('EXPENSE'),
+      expense: expenseSchema,
+    }),
+    z.object({
+      ...conflictShape,
+      entityType: z.literal('PERIOD'),
+      period: periodSchema,
+    }),
+    z.object({
+      ...conflictShape,
+      entityType: z.literal('LOAN'),
+      loan: loanSchema,
+    }),
+  ]),
+  z.object({
+    mutationId: z.uuid(),
+    status: z.literal('REJECTED'),
+    code: z.string(),
+    details: z
+      .array(
+        z.object({
+          path: z.string(),
+          code: z.string(),
+          message: z.string(),
+        }),
+      )
+      .optional(),
+  }),
+]);
 
 const mutationResponseSchema = z.object({
   results: z.array(mutationResultSchema),
@@ -94,25 +181,72 @@ const authResponseSchema = z.object({
   member: z.object({ key: z.enum(['SUMON', 'EBRAHIM']) }),
 });
 
+const changeShape = {
+  cursor: z.string(),
+  operation: z.enum(['CREATED', 'UPDATED', 'DELETED']),
+  originMutationId: z.uuid(),
+} as const;
+
+const changeSchema = z.discriminatedUnion('entityType', [
+  z.object({
+    ...changeShape,
+    entityType: z.literal('EXPENSE'),
+    expense: expenseSchema,
+  }),
+  z.object({
+    ...changeShape,
+    entityType: z.literal('PERIOD'),
+    period: periodSchema,
+  }),
+  z.object({
+    ...changeShape,
+    entityType: z.literal('LOAN'),
+    loan: loanSchema,
+  }),
+]);
+
 const changePageSchema = z.object({
-  changes: z.array(
-    z.object({
-      cursor: z.string(),
-      operation: z.enum(['CREATED', 'UPDATED', 'DELETED']),
-      originMutationId: z.uuid(),
-      expense: expenseSchema,
-    }),
-  ),
+  changes: z.array(changeSchema),
   nextCursor: z.string(),
   hasMore: z.boolean(),
 });
 
 const bootstrapPageSchema = z.object({
-  items: z.array(expenseSchema),
+  items: z.array(entityPayloadSchema),
   watermarkCursor: z.string(),
   nextPageToken: z.string().nullable(),
   hasMore: z.boolean(),
 });
+
+type EntityPayloadView = z.infer<typeof entityPayloadSchema>;
+
+/**
+ * Reads one payload key out of any envelope that carries it — a mutation
+ * result, a change, or a bootstrap item — and fails loudly when the envelope
+ * describes a different entity.
+ */
+function expenseOf(value: unknown): z.infer<typeof expenseSchema> {
+  return z.object({ expense: expenseSchema }).parse(value).expense;
+}
+
+function periodOf(value: unknown): z.infer<typeof periodSchema> {
+  return z.object({ period: periodSchema }).parse(value).period;
+}
+
+function loanOf(value: unknown): z.infer<typeof loanSchema> {
+  return z.object({ loan: loanSchema }).parse(value).loan;
+}
+
+function expenseIdsOf(
+  values: { entityType: 'EXPENSE' | 'PERIOD' | 'LOAN' }[],
+): string[] {
+  return values.flatMap((value) =>
+    value.entityType === 'EXPENSE' ? [expenseOf(value).id] : [],
+  );
+}
+
+type EntityTypeName = 'EXPENSE' | 'PERIOD' | 'LOAN';
+type OperationName = 'CREATE' | 'UPDATE' | 'DELETE';
 
 interface ExpenseFields {
   amountMinor: number;
@@ -126,6 +260,21 @@ interface ExpenseFields {
   payer: 'SUMON' | 'EBRAHIM';
   occurredAt: string;
   note: string | null;
+  periodId?: string;
+}
+
+interface PeriodFields {
+  sequenceNumber: number;
+  startedAt: string;
+  closedAt: string | null;
+  note: string | null;
+}
+
+interface LoanFields {
+  debtor: 'SUMON' | 'EBRAHIM';
+  amountMinor: number;
+  occurredAt: string;
+  note: string | null;
 }
 
 const defaultExpense: ExpenseFields = {
@@ -136,21 +285,64 @@ const defaultExpense: ExpenseFields = {
   note: 'Market',
 };
 
+const defaultLoan: LoanFields = {
+  debtor: 'EBRAHIM',
+  amountMinor: 50_000,
+  occurredAt: '2026-08-13T10:30:00+06:00',
+  note: 'Rickshaw fare',
+};
+
+const firstPeriodStartedAt = '2026-08-01T00:00:00+06:00';
+
 let primarySumon: AuthenticatedMember;
+let openPeriodId: string;
 
 function createMutation(
-  operation: 'CREATE' | 'UPDATE' | 'DELETE',
+  entityType: 'EXPENSE',
+  operation: OperationName,
   entityId: string,
   baseVersion: number,
-  expense?: ExpenseFields,
-  mutationId = randomUUID(),
+  payload?: ExpenseFields,
+  mutationId?: string,
+): Record<string, unknown>;
+function createMutation(
+  entityType: 'PERIOD',
+  operation: OperationName,
+  entityId: string,
+  baseVersion: number,
+  payload?: PeriodFields,
+  mutationId?: string,
+): Record<string, unknown>;
+function createMutation(
+  entityType: 'LOAN',
+  operation: OperationName,
+  entityId: string,
+  baseVersion: number,
+  payload?: LoanFields,
+  mutationId?: string,
+): Record<string, unknown>;
+function createMutation(
+  entityType: EntityTypeName,
+  operation: OperationName,
+  entityId: string,
+  baseVersion: number,
+  payload?: ExpenseFields | PeriodFields | LoanFields,
+  mutationId: string = randomUUID(),
 ): Record<string, unknown> {
+  const payloadKey =
+    entityType === 'EXPENSE'
+      ? 'expense'
+      : entityType === 'PERIOD'
+        ? 'period'
+        : 'loan';
+
   return {
     mutationId,
     entityId,
+    entityType,
     operation,
     baseVersion,
-    ...(expense === undefined ? {} : { expense }),
+    ...(payload === undefined ? {} : { [payloadKey]: payload }),
   };
 }
 
@@ -177,6 +369,17 @@ async function postMutations(
   return mutationResponseSchema.parse(response.body as unknown);
 }
 
+async function pullChanges(
+  accessToken: string,
+  query: string,
+): Promise<z.infer<typeof changePageSchema>> {
+  const response = await request(app)
+    .get(query)
+    .set('Authorization', `Bearer ${accessToken}`);
+  expect(response.status).toBe(200);
+  return changePageSchema.parse(response.body as unknown);
+}
+
 interface Gate {
   readonly reached: Promise<void>;
   open: () => void;
@@ -195,11 +398,55 @@ function createGate(): Gate {
   };
 }
 
+// Expenses reference periods and loans reference members under `onDelete:
+// Restrict`, so the dependants have to go before the rows they point at.
 async function clearMutableData(): Promise<void> {
   await prisma.processedMutation.deleteMany();
   await prisma.expenseChange.deleteMany();
   await prisma.expense.deleteMany();
+  await prisma.loanEntry.deleteMany();
+  await prisma.spendingPeriod.deleteMany();
   await prisma.refreshToken.deleteMany();
+}
+
+/** Provisions the open period every expense needs, as `bootstrap.ts` does. */
+async function openPrimaryPeriod(): Promise<string> {
+  const period = await prisma.spendingPeriod.create({
+    data: {
+      id: randomUUID(),
+      householdId: primarySumon.householdId,
+      sequenceNumber: 1,
+      startedAt: new Date(firstPeriodStartedAt),
+    },
+  });
+
+  return period.id;
+}
+
+async function collectBootstrap(
+  accessToken: string,
+  limit: number,
+): Promise<EntityPayloadView[]> {
+  const items: EntityPayloadView[] = [];
+  let pageToken: string | null = null;
+  let watermark: string | undefined;
+
+  do {
+    const query =
+      pageToken === null
+        ? `/v1/sync/bootstrap?limit=${String(limit)}`
+        : `/v1/sync/bootstrap?limit=${String(limit)}&pageToken=${encodeURIComponent(pageToken)}`;
+    const response = await request(app)
+      .get(query)
+      .set('Authorization', `Bearer ${accessToken}`);
+    const page = bootstrapPageSchema.parse(response.body as unknown);
+    watermark ??= page.watermarkCursor;
+    expect(page.watermarkCursor).toBe(watermark);
+    items.push(...page.items);
+    pageToken = page.nextPageToken;
+  } while (pageToken !== null);
+
+  return items;
 }
 
 integration('PostgreSQL API integration', () => {
@@ -253,10 +500,12 @@ integration('PostgreSQL API integration', () => {
       householdId: primary.id,
       memberKey: 'SUMON',
     };
+    openPeriodId = await openPrimaryPeriod();
   }, 30_000);
 
   beforeEach(async () => {
     await clearMutableData();
+    openPeriodId = await openPrimaryPeriod();
   });
 
   afterAll(async () => {
@@ -354,6 +603,7 @@ integration('PostgreSQL API integration', () => {
     const entityId = randomUUID();
     const mutationId = randomUUID();
     const mutation = createMutation(
+      'EXPENSE',
       'CREATE',
       entityId,
       0,
@@ -387,12 +637,12 @@ integration('PostgreSQL API integration', () => {
 
     const [sumonResult, ebrahimResult] = await Promise.all([
       postMutations(sumon.accessToken, [
-        createMutation('CREATE', sumonEntity, 0, defaultExpense),
+        createMutation('EXPENSE', 'CREATE', sumonEntity, 0, defaultExpense),
       ]),
       postMutations(ebrahim.accessToken, [
-        createMutation('CREATE', ebrahimEntity, 0, {
+        createMutation('EXPENSE', 'CREATE', ebrahimEntity, 0, {
           ...defaultExpense,
-          amountMinor: 25_001,
+          amountMinor: 25_000,
           payer: 'EBRAHIM',
         }),
       ]),
@@ -403,11 +653,11 @@ integration('PostgreSQL API integration', () => {
     expect(await prisma.expense.count()).toBe(2);
     expect(await prisma.expenseChange.count()).toBe(2);
 
-    const pulled = await request(app)
-      .get('/v1/sync/changes?limit=10')
-      .set('Authorization', `Bearer ${sumon.accessToken}`);
-    const page = changePageSchema.parse(pulled.body as unknown);
-    expect(new Set(page.changes.map((change) => change.expense.id))).toEqual(
+    const page = await pullChanges(
+      sumon.accessToken,
+      '/v1/sync/changes?limit=10',
+    );
+    expect(new Set(expenseIdsOf(page.changes))).toEqual(
       new Set([sumonEntity, ebrahimEntity]),
     );
   });
@@ -416,39 +666,37 @@ integration('PostgreSQL API integration', () => {
     const session = await login('SUMON', sumonPin);
     const entityId = randomUUID();
     await postMutations(session.accessToken, [
-      createMutation('CREATE', entityId, 0, defaultExpense),
+      createMutation('EXPENSE', 'CREATE', entityId, 0, defaultExpense),
     ]);
-    const initialPull = await request(app)
-      .get('/v1/sync/changes?limit=10')
-      .set('Authorization', `Bearer ${session.accessToken}`);
-    const initialPage = changePageSchema.parse(initialPull.body as unknown);
+    const initialPage = await pullChanges(
+      session.accessToken,
+      '/v1/sync/changes?limit=10',
+    );
 
     const updated = await postMutations(session.accessToken, [
-      createMutation('UPDATE', entityId, 1, {
+      createMutation('EXPENSE', 'UPDATE', entityId, 1, {
         ...defaultExpense,
-        amountMinor: 55_501,
+        amountMinor: 55_500,
         note: 'Updated',
       }),
     ]);
-    expect(updated.results[0]?.expense?.version).toBe(2);
+    expect(expenseOf(updated.results[0]).version).toBe(2);
 
     const deleted = await postMutations(session.accessToken, [
-      createMutation('DELETE', entityId, 2),
+      createMutation('EXPENSE', 'DELETE', entityId, 2),
     ]);
-    expect(deleted.results[0]?.expense?.version).toBe(3);
-    expect(deleted.results[0]?.expense?.deletedAt).not.toBeNull();
+    expect(expenseOf(deleted.results[0]).version).toBe(3);
+    expect(expenseOf(deleted.results[0]).deletedAt).not.toBeNull();
 
-    const propagated = await request(app)
-      .get(
-        `/v1/sync/changes?limit=10&cursor=${encodeURIComponent(initialPage.nextCursor)}`,
-      )
-      .set('Authorization', `Bearer ${session.accessToken}`);
-    const page = changePageSchema.parse(propagated.body as unknown);
+    const page = await pullChanges(
+      session.accessToken,
+      `/v1/sync/changes?limit=10&cursor=${encodeURIComponent(initialPage.nextCursor)}`,
+    );
     expect(page.changes.map((change) => change.operation)).toEqual([
       'UPDATED',
       'DELETED',
     ]);
-    expect(page.changes[1]?.expense.deletedAt).not.toBeNull();
+    expect(expenseOf(page.changes[1]).deletedAt).not.toBeNull();
 
     const stored = await prisma.expense.findUnique({ where: { id: entityId } });
     expect(stored).not.toBeNull();
@@ -459,10 +707,10 @@ integration('PostgreSQL API integration', () => {
     const session = await login('SUMON', sumonPin);
     const entityId = randomUUID();
     await postMutations(session.accessToken, [
-      createMutation('CREATE', entityId, 0, defaultExpense),
+      createMutation('EXPENSE', 'CREATE', entityId, 0, defaultExpense),
     ]);
     await postMutations(session.accessToken, [
-      createMutation('UPDATE', entityId, 1, {
+      createMutation('EXPENSE', 'UPDATE', entityId, 1, {
         ...defaultExpense,
         amountMinor: 70_000,
       }),
@@ -470,20 +718,22 @@ integration('PostgreSQL API integration', () => {
 
     const siblingEntityId = randomUUID();
     const stale = await postMutations(session.accessToken, [
-      createMutation('UPDATE', entityId, 1, {
+      createMutation('EXPENSE', 'UPDATE', entityId, 1, {
         ...defaultExpense,
         amountMinor: 90_000,
       }),
-      createMutation('CREATE', siblingEntityId, 0, defaultExpense),
+      createMutation('EXPENSE', 'CREATE', siblingEntityId, 0, defaultExpense),
     ]);
 
     expect(stale.results[0]).toMatchObject({
       status: 'CONFLICT',
       code: 'VERSION_CONFLICT',
+      entityType: 'EXPENSE',
       expense: { id: entityId, version: 2, amountMinor: 70_000 },
     });
     expect(stale.results[1]).toMatchObject({
       status: 'APPLIED',
+      entityType: 'EXPENSE',
       expense: { id: siblingEntityId, version: 1 },
     });
     expect(
@@ -499,9 +749,9 @@ integration('PostgreSQL API integration', () => {
     await postMutations(
       session.accessToken,
       entityIds.map((entityId, index) =>
-        createMutation('CREATE', entityId, 0, {
+        createMutation('EXPENSE', 'CREATE', entityId, 0, {
           ...defaultExpense,
-          amountMinor: 10_000 + index,
+          amountMinor: 10_000 + index * 100,
         }),
       ),
     );
@@ -510,50 +760,59 @@ integration('PostgreSQL API integration', () => {
       throw new Error('Missing test entity ID.');
     }
     await postMutations(session.accessToken, [
-      createMutation('DELETE', deletedId, 1),
+      createMutation('EXPENSE', 'DELETE', deletedId, 1),
     ]);
 
-    const firstPullResponse = await request(app)
-      .get('/v1/sync/changes?limit=2')
-      .set('Authorization', `Bearer ${session.accessToken}`);
-    const firstPull = changePageSchema.parse(firstPullResponse.body as unknown);
+    const firstPull = await pullChanges(
+      session.accessToken,
+      '/v1/sync/changes?limit=2',
+    );
     expect(firstPull.changes).toHaveLength(2);
     expect(firstPull.hasMore).toBe(true);
 
-    const secondPullResponse = await request(app)
-      .get(
-        `/v1/sync/changes?limit=2&cursor=${encodeURIComponent(firstPull.nextCursor)}`,
-      )
-      .set('Authorization', `Bearer ${session.accessToken}`);
-    const secondPull = changePageSchema.parse(
-      secondPullResponse.body as unknown,
+    const secondPull = await pullChanges(
+      session.accessToken,
+      `/v1/sync/changes?limit=2&cursor=${encodeURIComponent(firstPull.nextCursor)}`,
     );
     expect(secondPull.changes).toHaveLength(2);
     expect(secondPull.hasMore).toBe(false);
     expect(secondPull.changes.at(-1)?.operation).toBe('DELETED');
 
-    const bootstrapItems: z.infer<typeof expenseSchema>[] = [];
-    let pageToken: string | null = null;
-    let watermark: string | undefined;
-    do {
-      const query =
-        pageToken === null
-          ? '/v1/sync/bootstrap?limit=1'
-          : `/v1/sync/bootstrap?limit=1&pageToken=${encodeURIComponent(pageToken)}`;
-      const response = await request(app)
-        .get(query)
-        .set('Authorization', `Bearer ${session.accessToken}`);
-      const page = bootstrapPageSchema.parse(response.body as unknown);
-      watermark ??= page.watermarkCursor;
-      expect(page.watermarkCursor).toBe(watermark);
-      bootstrapItems.push(...page.items);
-      pageToken = page.nextPageToken;
-    } while (pageToken !== null);
+    const bootstrapItems = await collectBootstrap(session.accessToken, 1);
 
-    expect(bootstrapItems).toHaveLength(3);
+    // The open period arrives ahead of the three expenses that reference it.
+    expect(bootstrapItems.map((item) => item.entityType)).toEqual([
+      'PERIOD',
+      'EXPENSE',
+      'EXPENSE',
+      'EXPENSE',
+    ]);
+    expect(periodOf(bootstrapItems[0]).id).toBe(openPeriodId);
     expect(
-      bootstrapItems.find((item) => item.id === deletedId)?.deletedAt,
+      bootstrapItems
+        .slice(1)
+        .map((item) => expenseOf(item))
+        .find((expense) => expense.id === deletedId)?.deletedAt,
     ).not.toBeNull();
+  });
+
+  it('walks periods, expenses, and loans in order across bootstrap pages', async () => {
+    const session = await login('SUMON', sumonPin);
+    await postMutations(session.accessToken, [
+      createMutation('EXPENSE', 'CREATE', randomUUID(), 0, defaultExpense),
+      createMutation('LOAN', 'CREATE', randomUUID(), 0, defaultLoan),
+    ]);
+
+    const paged = await collectBootstrap(session.accessToken, 1);
+    const single = await collectBootstrap(session.accessToken, 50);
+
+    expect(paged.map((item) => item.entityType)).toEqual([
+      'PERIOD',
+      'EXPENSE',
+      'LOAN',
+    ]);
+    expect(single).toEqual(paged);
+    expect(loanOf(paged[2]).debtor).toBe('EBRAHIM');
   });
 
   it('delivers a change whose sequence was allocated before a later change committed', async () => {
@@ -580,6 +839,7 @@ integration('PostgreSQL API integration', () => {
             amountMinor: 30_000n,
             category: 'GROCERIES',
             payerId: primarySumon.memberId,
+            periodId: openPeriodId,
             occurredAt,
             note: 'Allocated first',
             version: 1,
@@ -591,6 +851,7 @@ integration('PostgreSQL API integration', () => {
           data: {
             householdId,
             entityId: allocatedFirstId,
+            entityType: 'EXPENSE',
             entityVersion: 1,
             operation: 'CREATED',
             originMutationId: randomUUID(),
@@ -601,6 +862,7 @@ integration('PostgreSQL API integration', () => {
               payer: 'SUMON',
               occurredAt: occurredAt.toISOString(),
               note: 'Allocated first',
+              periodId: openPeriodId,
               version: 1,
               updatedAt: changedAt.toISOString(),
               deletedAt: null,
@@ -624,9 +886,9 @@ integration('PostgreSQL API integration', () => {
     await allocated.reached;
 
     const push = syncService.applyMutations(primarySumon, [
-      createMutation('CREATE', committedFirstId, 0, {
+      createMutation('EXPENSE', 'CREATE', committedFirstId, 0, {
         ...defaultExpense,
-        amountMinor: 12_345,
+        amountMinor: 12_300,
       }) as never,
     ]);
     await new Promise<void>((resolve) => {
@@ -646,9 +908,10 @@ integration('PostgreSQL API integration', () => {
       firstPage.nextCursor,
       50,
     );
-    const delivered = [...firstPage.changes, ...secondPage.changes].map(
-      (change) => change.expense.id,
-    );
+    const delivered = expenseIdsOf([
+      ...firstPage.changes,
+      ...secondPage.changes,
+    ]);
     expect(delivered).toEqual([allocatedFirstId, committedFirstId]);
     expect(await prisma.expenseChange.count({ where: { householdId } })).toBe(
       2,
@@ -670,6 +933,18 @@ integration('PostgreSQL API integration', () => {
         pinHash: 'not-used-by-this-service-level-test',
       },
     });
+    // The isolated household is provisioned well enough to record its own
+    // expenses, so the only thing it is missing is the entity under test. That
+    // keeps the rejection specific: a household that had no open period would
+    // report PERIOD_NOT_FOUND and hide whether the expense leaked.
+    const isolatedPeriod = await prisma.spendingPeriod.create({
+      data: {
+        id: randomUUID(),
+        householdId: isolatedHousehold.id,
+        sequenceNumber: 1,
+        startedAt: new Date(firstPeriodStartedAt),
+      },
+    });
     const isolatedSumon: AuthenticatedMember = {
       memberId: isolatedMember.id,
       householdId: isolatedHousehold.id,
@@ -679,14 +954,20 @@ integration('PostgreSQL API integration', () => {
 
     try {
       const created = await syncService.applyMutations(primarySumon, [
-        createMutation('CREATE', entityId, 0, defaultExpense) as never,
+        createMutation(
+          'EXPENSE',
+          'CREATE',
+          entityId,
+          0,
+          defaultExpense,
+        ) as never,
       ]);
       expect(created[0]?.status).toBe('APPLIED');
 
       const crossHousehold = await syncService.applyMutations(isolatedSumon, [
-        createMutation('UPDATE', entityId, 1, {
+        createMutation('EXPENSE', 'UPDATE', entityId, 1, {
           ...defaultExpense,
-          amountMinor: 99_999,
+          amountMinor: 99_900,
         }) as never,
       ]);
       expect(crossHousehold[0]).toMatchObject({
@@ -705,14 +986,33 @@ integration('PostgreSQL API integration', () => {
         10,
       );
       expect(isolatedChanges.changes).toEqual([]);
-      expect(isolatedBootstrap.items).toEqual([]);
+      expect(isolatedBootstrap.items.map((item) => item.entityType)).toEqual([
+        'PERIOD',
+      ]);
+      expect(periodOf(isolatedBootstrap.items[0]).id).toBe(isolatedPeriod.id);
+      expect(
+        (await prisma.expense.findUniqueOrThrow({ where: { id: entityId } }))
+          .amountMinor,
+      ).toBe(40_000n);
       expect(
         await prisma.expense.count({
-          where: { id: entityId, householdId: isolatedSumon.householdId },
+          where: { householdId: isolatedSumon.householdId },
         }),
       ).toBe(0);
     } finally {
       await prisma.processedMutation.deleteMany({
+        where: { householdId: isolatedHousehold.id },
+      });
+      await prisma.expenseChange.deleteMany({
+        where: { householdId: isolatedHousehold.id },
+      });
+      await prisma.expense.deleteMany({
+        where: { householdId: isolatedHousehold.id },
+      });
+      await prisma.loanEntry.deleteMany({
+        where: { householdId: isolatedHousehold.id },
+      });
+      await prisma.spendingPeriod.deleteMany({
         where: { householdId: isolatedHousehold.id },
       });
       await prisma.member.deleteMany({
@@ -726,11 +1026,11 @@ integration('PostgreSQL API integration', () => {
     const session = await login('SUMON', sumonPin);
     const validEntity = randomUUID();
     const response = await postMutations(session.accessToken, [
-      createMutation('CREATE', randomUUID(), 0, {
+      createMutation('EXPENSE', 'CREATE', randomUUID(), 0, {
         ...defaultExpense,
         amountMinor: 0,
       }),
-      createMutation('CREATE', validEntity, 0, defaultExpense),
+      createMutation('EXPENSE', 'CREATE', validEntity, 0, defaultExpense),
     ]);
 
     expect(response.results[0]).toMatchObject({
@@ -741,11 +1041,51 @@ integration('PostgreSQL API integration', () => {
     expect(await prisma.expense.count()).toBe(1);
   });
 
+  it.each([99, 150, 12_345, MAX_AMOUNT_MINOR])(
+    'rejects the non-whole-taka amount %s',
+    async (amountMinor) => {
+      const session = await login('SUMON', sumonPin);
+      const response = await postMutations(session.accessToken, [
+        createMutation('EXPENSE', 'CREATE', randomUUID(), 0, {
+          ...defaultExpense,
+          amountMinor,
+        }),
+        createMutation('LOAN', 'CREATE', randomUUID(), 0, {
+          ...defaultLoan,
+          amountMinor,
+        }),
+      ]);
+
+      expect(response.results[0]).toMatchObject({
+        status: 'REJECTED',
+        code: 'INVALID_MUTATION',
+      });
+      expect(response.results[1]).toMatchObject({
+        status: 'REJECTED',
+        code: 'INVALID_MUTATION',
+      });
+      expect(await prisma.expense.count()).toBe(0);
+      expect(await prisma.loanEntry.count()).toBe(0);
+    },
+  );
+
+  it('accepts one taka, the smallest amount the contract allows', async () => {
+    const session = await login('SUMON', sumonPin);
+    const response = await postMutations(session.accessToken, [
+      createMutation('EXPENSE', 'CREATE', randomUUID(), 0, {
+        ...defaultExpense,
+        amountMinor: 100,
+      }),
+    ]);
+
+    expect(expenseOf(response.results[0]).amountMinor).toBe(100);
+  });
+
   it('stores offset timestamps as UTC instants', async () => {
     const session = await login('SUMON', sumonPin);
     const entityId = randomUUID();
     await postMutations(session.accessToken, [
-      createMutation('CREATE', entityId, 0, {
+      createMutation('EXPENSE', 'CREATE', entityId, 0, {
         ...defaultExpense,
         occurredAt: '2026-08-01T00:00:00+06:00',
       }),
@@ -753,5 +1093,270 @@ integration('PostgreSQL API integration', () => {
 
     const stored = await prisma.expense.findUnique({ where: { id: entityId } });
     expect(stored?.occurredAt.toISOString()).toBe('2026-07-31T18:00:00.000Z');
+  });
+
+  it('files an expense in the open period when periodId is omitted', async () => {
+    const session = await login('SUMON', sumonPin);
+    const response = await postMutations(session.accessToken, [
+      createMutation('EXPENSE', 'CREATE', randomUUID(), 0, defaultExpense),
+    ]);
+
+    expect(expenseOf(response.results[0]).periodId).toBe(openPeriodId);
+  });
+
+  it('honours an explicitly named period', async () => {
+    const session = await login('SUMON', sumonPin);
+    const response = await postMutations(session.accessToken, [
+      createMutation('EXPENSE', 'CREATE', randomUUID(), 0, {
+        ...defaultExpense,
+        periodId: openPeriodId,
+      }),
+    ]);
+
+    expect(expenseOf(response.results[0]).periodId).toBe(openPeriodId);
+  });
+
+  it('rejects an expense that names a period the household does not have', async () => {
+    const session = await login('SUMON', sumonPin);
+    const response = await postMutations(session.accessToken, [
+      createMutation('EXPENSE', 'CREATE', randomUUID(), 0, {
+        ...defaultExpense,
+        periodId: randomUUID(),
+      }),
+    ]);
+
+    expect(response.results[0]).toMatchObject({
+      status: 'REJECTED',
+      code: 'PERIOD_NOT_FOUND',
+    });
+    expect(await prisma.expense.count()).toBe(0);
+  });
+
+  it('admits an offline expense into the period it was recorded in, even once closed', async () => {
+    const session = await login('SUMON', sumonPin);
+    const nextPeriodId = randomUUID();
+    const closed = await postMutations(session.accessToken, [
+      createMutation('PERIOD', 'UPDATE', openPeriodId, 1, {
+        sequenceNumber: 1,
+        startedAt: firstPeriodStartedAt,
+        closedAt: '2026-08-31T23:59:00+06:00',
+        note: null,
+      }),
+      createMutation('PERIOD', 'CREATE', nextPeriodId, 0, {
+        sequenceNumber: 2,
+        startedAt: '2026-09-01T00:00:00+06:00',
+        closedAt: null,
+        note: null,
+      }),
+    ]);
+    expect(closed.results.map((result) => result.status)).toEqual([
+      'APPLIED',
+      'APPLIED',
+    ]);
+
+    const late = await postMutations(session.accessToken, [
+      createMutation('EXPENSE', 'CREATE', randomUUID(), 0, {
+        ...defaultExpense,
+        periodId: openPeriodId,
+      }),
+      createMutation('EXPENSE', 'CREATE', randomUUID(), 0, defaultExpense),
+    ]);
+
+    expect(expenseOf(late.results[0]).periodId).toBe(openPeriodId);
+    // An expense that names nothing lands in whichever period is open now.
+    expect(expenseOf(late.results[1]).periodId).toBe(nextPeriodId);
+  });
+
+  it('closes one period and opens the next in a single batch', async () => {
+    const session = await login('SUMON', sumonPin);
+    const nextPeriodId = randomUUID();
+    const response = await postMutations(session.accessToken, [
+      createMutation('PERIOD', 'UPDATE', openPeriodId, 1, {
+        sequenceNumber: 1,
+        startedAt: firstPeriodStartedAt,
+        closedAt: '2026-08-31T23:59:00+06:00',
+        note: null,
+      }),
+      createMutation('PERIOD', 'CREATE', nextPeriodId, 0, {
+        sequenceNumber: 2,
+        startedAt: '2026-09-01T00:00:00+06:00',
+        closedAt: null,
+        note: null,
+      }),
+    ]);
+
+    expect(periodOf(response.results[0])).toMatchObject({
+      id: openPeriodId,
+      version: 2,
+    });
+    expect(periodOf(response.results[0]).closedAt).not.toBeNull();
+    expect(periodOf(response.results[1])).toMatchObject({
+      id: nextPeriodId,
+      sequenceNumber: 2,
+      closedAt: null,
+      version: 1,
+    });
+    expect(
+      await prisma.spendingPeriod.count({
+        where: { householdId: primarySumon.householdId, closedAt: null },
+      }),
+    ).toBe(1);
+
+    const page = await pullChanges(
+      session.accessToken,
+      '/v1/sync/changes?limit=10',
+    );
+    expect(
+      page.changes.map((change) => [change.entityType, change.operation]),
+    ).toEqual([
+      ['PERIOD', 'UPDATED'],
+      ['PERIOD', 'CREATED'],
+    ]);
+  });
+
+  it('keeps a household to one open period at a time', async () => {
+    const session = await login('SUMON', sumonPin);
+    const response = await postMutations(session.accessToken, [
+      createMutation('PERIOD', 'CREATE', randomUUID(), 0, {
+        sequenceNumber: 2,
+        startedAt: '2026-09-01T00:00:00+06:00',
+        closedAt: null,
+        note: null,
+      }),
+    ]);
+
+    expect(response.results[0]).toMatchObject({
+      status: 'REJECTED',
+      code: 'PERIOD_ALREADY_OPEN',
+    });
+    expect(
+      await prisma.spendingPeriod.count({
+        where: { householdId: primarySumon.householdId },
+      }),
+    ).toBe(1);
+  });
+
+  it('refuses to reopen a settled period or to delete one', async () => {
+    const session = await login('SUMON', sumonPin);
+    await postMutations(session.accessToken, [
+      createMutation('PERIOD', 'UPDATE', openPeriodId, 1, {
+        sequenceNumber: 1,
+        startedAt: firstPeriodStartedAt,
+        closedAt: '2026-08-31T23:59:00+06:00',
+        note: null,
+      }),
+    ]);
+
+    const refused = await postMutations(session.accessToken, [
+      createMutation('PERIOD', 'UPDATE', openPeriodId, 2, {
+        sequenceNumber: 1,
+        startedAt: firstPeriodStartedAt,
+        closedAt: null,
+        note: null,
+      }),
+      createMutation('PERIOD', 'DELETE', openPeriodId, 2),
+    ]);
+
+    expect(refused.results[0]).toMatchObject({
+      status: 'REJECTED',
+      code: 'INVALID_MUTATION',
+    });
+    expect(refused.results[1]).toMatchObject({
+      status: 'REJECTED',
+      code: 'INVALID_MUTATION',
+    });
+    expect(
+      (
+        await prisma.spendingPeriod.findUniqueOrThrow({
+          where: { id: openPeriodId },
+        })
+      ).closedAt,
+    ).not.toBeNull();
+  });
+
+  it('records, edits, and soft-deletes a loan without touching expenses', async () => {
+    const session = await login('SUMON', sumonPin);
+    const loanId = randomUUID();
+
+    const created = await postMutations(session.accessToken, [
+      createMutation('LOAN', 'CREATE', loanId, 0, defaultLoan),
+    ]);
+    expect(created.results[0]).toMatchObject({
+      status: 'APPLIED',
+      entityType: 'LOAN',
+    });
+    expect(loanOf(created.results[0])).toMatchObject({
+      id: loanId,
+      debtor: 'EBRAHIM',
+      amountMinor: 50_000,
+      version: 1,
+      deletedAt: null,
+    });
+
+    const updated = await postMutations(session.accessToken, [
+      createMutation('LOAN', 'UPDATE', loanId, 1, {
+        ...defaultLoan,
+        debtor: 'SUMON',
+        amountMinor: 20_000,
+        note: 'Corrected',
+      }),
+    ]);
+    expect(loanOf(updated.results[0])).toMatchObject({
+      debtor: 'SUMON',
+      amountMinor: 20_000,
+      note: 'Corrected',
+      version: 2,
+    });
+
+    const deleted = await postMutations(session.accessToken, [
+      createMutation('LOAN', 'DELETE', loanId, 2),
+    ]);
+    expect(loanOf(deleted.results[0]).version).toBe(3);
+    expect(loanOf(deleted.results[0]).deletedAt).not.toBeNull();
+
+    const page = await pullChanges(
+      session.accessToken,
+      '/v1/sync/changes?limit=10',
+    );
+    expect(
+      page.changes.map((change) => [change.entityType, change.operation]),
+    ).toEqual([
+      ['LOAN', 'CREATED'],
+      ['LOAN', 'UPDATED'],
+      ['LOAN', 'DELETED'],
+    ]);
+    expect(await prisma.expense.count()).toBe(0);
+    expect(
+      (await prisma.loanEntry.findUniqueOrThrow({ where: { id: loanId } }))
+        .deletedAt,
+    ).not.toBeNull();
+  });
+
+  it('replays a period and a loan receipt without writing twice', async () => {
+    const session = await login('SUMON', sumonPin);
+    const loanId = randomUUID();
+    const batch = [
+      createMutation('PERIOD', 'UPDATE', openPeriodId, 1, {
+        sequenceNumber: 1,
+        startedAt: firstPeriodStartedAt,
+        closedAt: '2026-08-31T23:59:00+06:00',
+        note: null,
+      }),
+      createMutation('LOAN', 'CREATE', loanId, 0, defaultLoan),
+    ];
+
+    const first = await postMutations(session.accessToken, batch);
+    const replayed = await postMutations(session.accessToken, batch);
+
+    expect(replayed.results).toEqual(first.results);
+    expect(await prisma.expenseChange.count()).toBe(2);
+    expect(
+      (
+        await prisma.spendingPeriod.findUniqueOrThrow({
+          where: { id: openPeriodId },
+        })
+      ).version,
+    ).toBe(2);
+    expect(await prisma.loanEntry.count({ where: { id: loanId } })).toBe(1);
   });
 });
