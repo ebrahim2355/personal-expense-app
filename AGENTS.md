@@ -7,7 +7,7 @@
 - `packages/contracts/openapi.yaml`: the single API contract. Generate or validate client/server types from it; do not create undocumented duplicate request or response shapes.
 - `docs`: product, architecture, and delivery guidance.
 
-Do not add iOS, a web admin, or extra product areas without an explicit scope change.
+Do not add iOS, a web admin, or extra product areas without an explicit scope change. Spending periods, the manual lending ledger, whole-taka amounts, and local history search are already in scope and implemented; do not remove them or move search or dashboard summaries to the server.
 
 ## Standard commands
 
@@ -40,29 +40,35 @@ Run the narrowest relevant checks while developing and the complete lint, type-c
 
 - The product has one household and exactly two fixed members: `SUMON` and `EBRAHIM`. There is no registration or member-management API.
 - Use BDT only. Persist and calculate `amountMinor` as integer poisha. Never use binary floating point, `double`, or JavaScript decimal arithmetic for money.
-- Parse entered BDT from strings into poisha and format poisha with integer division/remainders. API amounts are JSON safe integers and PostgreSQL `BIGINT`; convert to/from JavaScript `bigint` at the API boundary.
-- Expense IDs and mutation IDs are client-generated UUIDs. They identify different things and must never be reused.
+- Amounts are whole taka. Every stored `amountMinor` is a multiple of `100`; reject a sub-taka remainder on both ends instead of rounding it.
+- Parse entered BDT from digit-only strings into poisha and format poisha with integer division/remainders. API amounts are JSON safe integers and PostgreSQL `BIGINT`; convert to/from JavaScript `bigint` at the API boundary.
+- Entity IDs and mutation IDs are client-generated UUIDs. They identify different things and must never be reused.
 - Store timestamps as UTC instants. Calendar range boundaries are calculated in the `Asia/Dhaka` time zone and use `[startInclusive, endExclusive)` semantics.
-- Keep expense deletion soft. A deleted expense remains a versioned tombstone and stays in bootstrap/change responses.
+- Keep expense and loan deletion soft. A deleted row remains a versioned tombstone and stays in bootstrap/change responses. Spending periods are never deleted and never reopened, so they have no tombstone.
+- Exactly one spending period is open per household, enforced by a partial unique index and by rejecting a second open period. An expense belongs to a period; an omitted `periodId` resolves to the open one, and a closed period still accepts an expense recorded offline before the close.
+- Loans are entirely manual and separate. They have their own net total and must never move the expense settlement figure.
 - Server-generated `version`, `updatedAt`, `deletedAt`, and change cursors are authoritative.
 - Keep domain code independent from Express, Prisma, Flutter widgets, Drift, and Dio where practical. Dashboard and split calculations should be pure, unit-tested integer functions.
 - Log request/correlation IDs, mutation IDs, status, and timing, but never PINs, bearer tokens, refresh tokens, authorization headers, or full sensitive request bodies.
 
 ## Money and settlement rules
 
-For an expense of `A` poisha:
+For an expense of `A` poisha, where `T = A ~/ 100` is its whole taka:
 
 ```text
-lowerHalf = A ~/ 2
-payerShare = lowerHalf + (A % 2)
+lowerHalf = (T ~/ 2) * 100
+payerShare = (T ~/ 2 + T % 2) * 100
 otherShare = lowerHalf
 ```
 
-The payer receives the one-poisha remainder when `A` is odd. For a selected range, calculate each member's allocated share by summing the per-expense allocation; do not divide the range total by two. A member's balance is `paid - allocated`. A positive balance means the other member owes them; the two balances must sum to zero.
+The payer receives the one-taka remainder when `T` is odd, so no share is ever a sub-taka figure. Calculate each member's allocated share by summing the per-expense allocation over the rows in scope — the open spending period on the dashboard, or the selected range in History; do not divide a total by two. A member's balance is `paid - allocated`. A positive balance means the other member owes them; the two balances must sum to zero.
+
+The lending ledger is summed separately as `ebrahimOwesMinor - sumonOwesMinor` over active loan rows. Never fold it into the expense settlement figure.
 
 ## Sync invariants
 
 - A local mutation updates Drift and the visible UI in one transaction, and also appends a durable outbox item.
+- One mutation route, one outbox, and one change feed carry every synchronized entity. Each candidate, result, change row, and bootstrap item names its `entityType` (`EXPENSE`, `PERIOD`, `LOAN`), which defaults to `EXPENSE`. Bootstrap applies periods before expenses before loans.
 - Freeze a mutation payload before its first send. Retrying the same mutation UUID must send byte-for-byte equivalent semantics.
 - The server stores an idempotency receipt atomically with each accepted mutation and returns the stored result for a retry. Reusing an ID for different content is an error.
 - Serialize sync runs. Pull/bootstrap pages fully, push only dependency-ready mutations in local sequence, apply replies transactionally, and persist a cursor only after its page is applied.
@@ -76,15 +82,15 @@ The payer receives the one-poisha remainder when `A` is odd. For a selected rang
 ## Validation and security expectations
 
 - Validate every external value on both mobile and API. The contract is authoritative for enum values, UUIDs, timestamps, page sizes, note length, and amount bounds.
-- Accept an amount only when its decimal string has at most two fractional digits and maps to `1..99_999_999_999` poisha. Reject exponent notation, signs, NaN/infinity, and excess precision.
+- Accept an amount only when it is a whole number of taka mapping to `100..99_999_999_999` poisha and divisible by `100`. Reject decimal points, exponent notation, signs, NaN/infinity, and any sub-taka remainder.
 - Notes are optional, trimmed, normalized to `null` when empty, and limited to 500 Unicode code points. Categories and payers must be exact contract enum values.
 - Hash PINs with Argon2id and a unique salt. Do not store or log plaintext PINs.
 - Use short-lived access JWTs plus opaque, rotating, revocable refresh tokens. Store only refresh-token hashes server-side and tokens only in Android secure storage.
 - Require HTTPS, validate configuration at startup, use generic login failures, rate-limit authentication and API traffic, and cap JSON body/batch/page sizes.
-- Add tests for money boundaries, odd-poisha splits, date-range boundaries, duplicate mutation delivery, lost responses, pagination, version conflicts, tombstones, refresh rotation/reuse, and server-wins reconciliation.
+- Add tests for money boundaries, whole-taka rejection, odd-taka splits, date-range boundaries, period open/close rules, loan create/edit/delete and its net total, local search, duplicate mutation delivery, lost responses, pagination, version conflicts, tombstones, refresh rotation/reuse, and server-wins reconciliation.
 
 ## Scope boundaries
 
-In scope: login for the two fixed members, dashboard/date ranges/settlement, add/view/edit/soft-delete expenses, offline local operation, and synchronization.
+In scope: login for the two fixed members, a dashboard scoped to the open spending period with settlement, closing a period to open the next one, add/view/edit/soft-delete expenses, a manual lending ledger, history filters and local search, offline local operation, and synchronization.
 
-Out of scope: budgets, custom split percentages, receipts, notifications, recurring expenses, bank integration, iOS, web administration, public registration, new members, or multiple households.
+Out of scope: budgets, custom split percentages, receipts, notifications, recurring expenses, bank integration, iOS, web administration, public registration, new members, multiple households, sub-taka amounts, loans derived automatically from expenses, and server-side search or dashboard summaries.
