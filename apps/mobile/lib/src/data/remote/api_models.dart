@@ -1,5 +1,7 @@
 import '../../domain/expense.dart';
+import '../../domain/loan.dart';
 import '../../domain/session.dart';
+import '../../domain/spending_period.dart';
 
 Object? _required(Map<String, Object?> json, String key) {
   if (!json.containsKey(key)) {
@@ -106,6 +108,39 @@ final class AuthResponseDto {
   final SessionTokens tokens;
 }
 
+/// Which of the three synced entities a mutation, change or bootstrap item
+/// describes. The wire default is EXPENSE, so a candidate queued before periods
+/// and loans existed still names the right entity.
+enum SyncEntityType { expense, period, loan }
+
+extension SyncEntityTypeWire on SyncEntityType {
+  String get wireName => switch (this) {
+    SyncEntityType.expense => 'EXPENSE',
+    SyncEntityType.period => 'PERIOD',
+    SyncEntityType.loan => 'LOAN',
+  };
+
+  String get storedName => wireName;
+
+  /// The payload property this entity's snapshot travels under.
+  String get payloadKey => switch (this) {
+    SyncEntityType.expense => 'expense',
+    SyncEntityType.period => 'period',
+    SyncEntityType.loan => 'loan',
+  };
+
+  static SyncEntityType parse(String value) => switch (value) {
+    'EXPENSE' => SyncEntityType.expense,
+    'PERIOD' => SyncEntityType.period,
+    'LOAN' => SyncEntityType.loan,
+    _ => throw FormatException('Unknown sync entity type: $value'),
+  };
+
+  static SyncEntityType parseOrExpense(Object? value) => value == null
+      ? SyncEntityType.expense
+      : parse(_string(value, 'entityType'));
+}
+
 final class ExpenseDto {
   const ExpenseDto({
     required this.id,
@@ -116,6 +151,7 @@ final class ExpenseDto {
     required this.version,
     required this.updatedAt,
     this.note,
+    this.periodId,
     this.deletedAt,
   });
 
@@ -136,6 +172,7 @@ final class ExpenseDto {
       ),
       occurredAt: _instant(_required(json, 'occurredAt'), 'expense.occurredAt'),
       note: noteValue == null ? null : _string(noteValue, 'expense.note'),
+      periodId: _string(_required(json, 'periodId'), 'expense.periodId'),
       version: _integer(_required(json, 'version'), 'expense.version'),
       updatedAt: _instant(_required(json, 'updatedAt'), 'expense.updatedAt'),
       deletedAt: deletedValue == null
@@ -150,6 +187,7 @@ final class ExpenseDto {
   final HouseholdMember payer;
   final DateTime occurredAt;
   final String? note;
+  final String? periodId;
   final int version;
   final DateTime updatedAt;
   final DateTime? deletedAt;
@@ -162,11 +200,116 @@ final class ExpenseDto {
         payer: payer,
         occurredAt: occurredAt,
         note: note,
+        periodId: periodId,
         version: version,
         updatedAt: updatedAt,
         deletedAt: deletedAt,
         syncState: syncState,
       );
+}
+
+final class PeriodDto {
+  const PeriodDto({
+    required this.id,
+    required this.sequenceNumber,
+    required this.startedAt,
+    required this.version,
+    required this.updatedAt,
+    this.closedAt,
+    this.note,
+  });
+
+  factory PeriodDto.fromJson(Map<String, Object?> json) {
+    final noteValue = _required(json, 'note');
+    final closedValue = _required(json, 'closedAt');
+    return PeriodDto(
+      id: _string(_required(json, 'id'), 'period.id'),
+      sequenceNumber: _integer(
+        _required(json, 'sequenceNumber'),
+        'period.sequenceNumber',
+      ),
+      startedAt: _instant(_required(json, 'startedAt'), 'period.startedAt'),
+      closedAt: closedValue == null
+          ? null
+          : _instant(closedValue, 'period.closedAt'),
+      note: noteValue == null ? null : _string(noteValue, 'period.note'),
+      version: _integer(_required(json, 'version'), 'period.version'),
+      updatedAt: _instant(_required(json, 'updatedAt'), 'period.updatedAt'),
+    );
+  }
+
+  final String id;
+  final int sequenceNumber;
+  final DateTime startedAt;
+  final DateTime? closedAt;
+  final String? note;
+  final int version;
+  final DateTime updatedAt;
+
+  SpendingPeriod toDomain({LocalSyncState syncState = LocalSyncState.synced}) =>
+      SpendingPeriod(
+        id: id,
+        sequenceNumber: sequenceNumber,
+        startedAt: startedAt,
+        closedAt: closedAt,
+        note: note,
+        version: version,
+        updatedAt: updatedAt,
+        syncState: syncState,
+      );
+}
+
+final class LoanDto {
+  const LoanDto({
+    required this.id,
+    required this.debtor,
+    required this.amountMinor,
+    required this.occurredAt,
+    required this.version,
+    required this.updatedAt,
+    this.note,
+    this.deletedAt,
+  });
+
+  factory LoanDto.fromJson(Map<String, Object?> json) {
+    final noteValue = _required(json, 'note');
+    final deletedValue = _required(json, 'deletedAt');
+    return LoanDto(
+      id: _string(_required(json, 'id'), 'loan.id'),
+      debtor: HouseholdMemberWire.parse(
+        _string(_required(json, 'debtor'), 'loan.debtor'),
+      ),
+      amountMinor: _integer(_required(json, 'amountMinor'), 'loan.amountMinor'),
+      occurredAt: _instant(_required(json, 'occurredAt'), 'loan.occurredAt'),
+      note: noteValue == null ? null : _string(noteValue, 'loan.note'),
+      version: _integer(_required(json, 'version'), 'loan.version'),
+      updatedAt: _instant(_required(json, 'updatedAt'), 'loan.updatedAt'),
+      deletedAt: deletedValue == null
+          ? null
+          : _instant(deletedValue, 'loan.deletedAt'),
+    );
+  }
+
+  final String id;
+  final HouseholdMember debtor;
+  final int amountMinor;
+  final DateTime occurredAt;
+  final String? note;
+  final int version;
+  final DateTime updatedAt;
+  final DateTime? deletedAt;
+
+  Loan toDomain({LocalSyncState syncState = LocalSyncState.synced}) => Loan(
+    id: id,
+    debtor: debtor,
+    amountMinor: amountMinor,
+    occurredAt: occurredAt,
+    note: note,
+    version: version,
+    updatedAt: updatedAt,
+    deletedAt: deletedAt,
+    syncState: syncState,
+  );
 }
 
 enum MutationOperation { create, update, delete }
@@ -194,21 +337,30 @@ final class MutationCandidateDto {
     required this.entityId,
     required this.operation,
     required this.baseVersion,
+    this.entityType = SyncEntityType.expense,
     this.expense,
+    this.period,
+    this.loan,
   });
 
   final String mutationId;
   final String entityId;
+  final SyncEntityType entityType;
   final MutationOperation operation;
   final int baseVersion;
   final Map<String, Object?>? expense;
+  final Map<String, Object?>? period;
+  final Map<String, Object?>? loan;
 
   Map<String, Object?> toJson() => <String, Object?>{
     'mutationId': mutationId,
     'entityId': entityId,
+    'entityType': entityType.wireName,
     'operation': operation.wireName,
     'baseVersion': baseVersion,
     if (expense != null) 'expense': expense,
+    if (period != null) 'period': period,
+    if (loan != null) 'loan': loan,
   };
 }
 
@@ -218,8 +370,11 @@ final class MutationResultDto {
   const MutationResultDto({
     required this.mutationId,
     required this.status,
+    this.entityType = SyncEntityType.expense,
     this.code,
     this.expense,
+    this.period,
+    this.loan,
   });
 
   factory MutationResultDto.fromJson(Map<String, Object?> json) {
@@ -231,27 +386,112 @@ final class MutationResultDto {
       _ => throw FormatException('Unknown mutation result: $statusValue'),
     };
     final expenseJson = json['expense'];
+    final periodJson = json['period'];
+    final loanJson = json['loan'];
     return MutationResultDto(
       mutationId: _string(_required(json, 'mutationId'), 'result.mutationId'),
       status: status,
+      entityType: SyncEntityTypeWire.parseOrExpense(json['entityType']),
       code: json['code'] == null ? null : _string(json['code'], 'result.code'),
       expense: expenseJson == null
           ? null
           : ExpenseDto.fromJson(_objectMap(expenseJson, 'result.expense')),
+      period: periodJson == null
+          ? null
+          : PeriodDto.fromJson(_objectMap(periodJson, 'result.period')),
+      loan: loanJson == null
+          ? null
+          : LoanDto.fromJson(_objectMap(loanJson, 'result.loan')),
     );
   }
 
   final String mutationId;
   final MutationResultStatus status;
+  final SyncEntityType entityType;
   final String? code;
   final ExpenseDto? expense;
+  final PeriodDto? period;
+  final LoanDto? loan;
+
+  /// The authoritative snapshot the server returned, or null when it sent none —
+  /// which is how a REJECTED result arrives.
+  EntitySnapshotDto? get snapshot => switch (entityType) {
+    SyncEntityType.expense =>
+      expense == null
+          ? null
+          : EntitySnapshotDto(entityType: entityType, expense: expense),
+    SyncEntityType.period =>
+      period == null
+          ? null
+          : EntitySnapshotDto(entityType: entityType, period: period),
+    SyncEntityType.loan =>
+      loan == null
+          ? null
+          : EntitySnapshotDto(entityType: entityType, loan: loan),
+  };
 }
+
+/// One entity snapshot as it arrives from the change feed or a bootstrap page.
+/// Exactly one of the three payloads is set, matching [entityType].
+final class EntitySnapshotDto {
+  const EntitySnapshotDto({
+    required this.entityType,
+    this.expense,
+    this.period,
+    this.loan,
+  });
+
+  factory EntitySnapshotDto.fromJson(Map<String, Object?> json, String name) {
+    final entityType = SyncEntityTypeWire.parseOrExpense(json['entityType']);
+    return switch (entityType) {
+      SyncEntityType.expense => EntitySnapshotDto(
+        entityType: entityType,
+        expense: ExpenseDto.fromJson(
+          _objectMap(_required(json, 'expense'), '$name.expense'),
+        ),
+      ),
+      SyncEntityType.period => EntitySnapshotDto(
+        entityType: entityType,
+        period: PeriodDto.fromJson(
+          _objectMap(_required(json, 'period'), '$name.period'),
+        ),
+      ),
+      SyncEntityType.loan => EntitySnapshotDto(
+        entityType: entityType,
+        loan: LoanDto.fromJson(
+          _objectMap(_required(json, 'loan'), '$name.loan'),
+        ),
+      ),
+    };
+  }
+
+  final SyncEntityType entityType;
+  final ExpenseDto? expense;
+  final PeriodDto? period;
+  final LoanDto? loan;
+
+  /// The id of whichever entity this snapshot carries.
+  String get entityId => switch (entityType) {
+    SyncEntityType.expense => expense!.id,
+    SyncEntityType.period => period!.id,
+    SyncEntityType.loan => loan!.id,
+  };
+
+  /// The server-assigned version of whichever entity this snapshot carries.
+  int get version => switch (entityType) {
+    SyncEntityType.expense => expense!.version,
+    SyncEntityType.period => period!.version,
+    SyncEntityType.loan => loan!.version,
+  };
+}
+
+typedef BootstrapItemDto = EntitySnapshotDto;
 
 final class ChangeDto {
   const ChangeDto({
     required this.cursor,
     required this.originMutationId,
-    required this.expense,
+    required this.snapshot,
   });
 
   factory ChangeDto.fromJson(Map<String, Object?> json) => ChangeDto(
@@ -260,14 +500,17 @@ final class ChangeDto {
       _required(json, 'originMutationId'),
       'change.originMutationId',
     ),
-    expense: ExpenseDto.fromJson(
-      _objectMap(_required(json, 'expense'), 'change.expense'),
-    ),
+    snapshot: EntitySnapshotDto.fromJson(json, 'change'),
   );
 
   final String cursor;
   final String originMutationId;
-  final ExpenseDto expense;
+  final EntitySnapshotDto snapshot;
+
+  SyncEntityType get entityType => snapshot.entityType;
+  ExpenseDto? get expense => snapshot.expense;
+  PeriodDto? get period => snapshot.period;
+  LoanDto? get loan => snapshot.loan;
 }
 
 final class ChangePageDto {
@@ -302,7 +545,12 @@ final class BootstrapPageDto {
     final nextToken = _required(json, 'nextPageToken');
     return BootstrapPageDto(
       items: _list(_required(json, 'items'), 'items')
-          .map((item) => ExpenseDto.fromJson(_objectMap(item, 'items[]')))
+          .map(
+            (item) => BootstrapItemDto.fromJson(
+              _objectMap(item, 'items[]'),
+              'items[]',
+            ),
+          )
           .toList(growable: false),
       watermarkCursor: _string(
         _required(json, 'watermarkCursor'),
@@ -315,7 +563,7 @@ final class BootstrapPageDto {
     );
   }
 
-  final List<ExpenseDto> items;
+  final List<BootstrapItemDto> items;
   final String watermarkCursor;
   final String? nextPageToken;
   final bool hasMore;
