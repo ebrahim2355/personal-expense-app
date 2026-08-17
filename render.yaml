@@ -1,0 +1,125 @@
+# Render Blueprint for the Household Expenses API.
+#
+# This file describes infrastructure; it never contains secret values. Every
+# secret is marked `sync: false`, which means Render prompts for it once during
+# Blueprint creation and stores it in the dashboard. Do not replace those with
+# literal values.
+#
+# The operator runbook is docs/RENDER_DEPLOYMENT.md. Read the free-instance
+# section there before syncing: `preDeployCommand` below requires a paid
+# instance type, and the migration has to be applied another way without it.
+#
+# Keep the repository root as the service root. npm workspaces, the root
+# lockfile, and this file all have to be visible to the build.
+
+services:
+  - type: web
+    name: household-expenses-api
+    runtime: node
+    # `region` is immutable after a service is created. An existing service
+    # keeps the region it was created in and ignores this value.
+    region: singapore
+    plan: starter
+    autoDeployTrigger: commit
+
+    # `--include=dev` is load-bearing. NODE_ENV=production makes npm skip
+    # devDependencies, which removes the TypeScript compiler and breaks
+    # `tsc`. The api `prebuild` script runs `prisma generate`.
+    buildCommand: npm ci --include=dev && npm run build --workspace @expenses/api
+
+    # Applies only committed migrations, on a separate instance, after the
+    # build and before it is deployed. A failure fails the deploy and leaves
+    # the previous release serving. Never change this to `prisma migrate dev`
+    # or `prisma db push`. Requires a paid instance type.
+    preDeployCommand: npm run prisma:migrate:deploy --workspace @expenses/api
+
+    startCommand: npm run start --workspace @expenses/api
+
+    # Returns 503 until PostgreSQL answers `SELECT 1`. `/health/live` proves
+    # only that the process is up and must not be used here.
+    healthCheckPath: /health/ready
+
+    # Neither directory is installed or compiled into the API, so a change to
+    # one cannot alter this build.
+    buildFilter:
+      ignoredPaths:
+        - apps/mobile/**
+        - docs/**
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # Render injects PORT and the API binds every interface, so PORT is
+      # deliberately absent here.
+
+      - key: NODE_VERSION
+        value: "24"
+
+      - key: DATABASE_URL
+        fromDatabase:
+          name: household-expenses-postgres
+          property: connectionString
+
+      # Independent random values of at least 32 characters. Startup throws if
+      # these two are equal. Changing CURSOR_SIGNING_SECRET invalidates every
+      # device's sync cursor, so it must survive deployments and restores.
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: CURSOR_SIGNING_SECRET
+        sync: false
+
+      # Optional PIN pepper. Keep it stable after provisioning: existing
+      # Argon2id hashes cannot be verified without the pepper they were
+      # created with.
+      - key: PIN_PEPPER
+        sync: false
+
+      - key: JWT_ISSUER
+        value: household-expenses-api
+      - key: JWT_AUDIENCE
+        value: household-expenses-mobile
+      - key: ACCESS_TOKEN_TTL_SECONDS
+        value: "600"
+      - key: REFRESH_TOKEN_TTL_DAYS
+        value: "30"
+
+      # Empty rejects every browser origin while still allowing the native
+      # Android client, which sends no Origin header. Only exact HTTPS origins
+      # are accepted here in production.
+      - key: CORS_ALLOWED_ORIGINS
+        value: ""
+
+      # Render terminates TLS at one proxy in front of the service. Startup
+      # throws in production when this is 0.
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+
+      - key: JSON_BODY_LIMIT
+        value: 64kb
+      - key: RATE_LIMIT_MAX
+        value: "300"
+      - key: AUTH_RATE_LIMIT_MAX
+        value: "20"
+      - key: RATE_LIMIT_WINDOW_MS
+        value: "60000"
+
+      - key: DATABASE_POOL_MAX
+        value: "10"
+      - key: DATABASE_CONNECTION_TIMEOUT_MS
+        value: "5000"
+      - key: LOG_LEVEL
+        value: info
+
+      # HOUSEHOLD_SLUG, HOUSEHOLD_NAME, SUMON_INITIAL_PIN, and
+      # EBRAHIM_INITIAL_PIN are intentionally not declared. Provisioning is an
+      # explicit one-off action; adding those PINs here would re-hash them on
+      # every release and leave them in the service configuration.
+
+databases:
+  - name: household-expenses-postgres
+    databaseName: expenses
+    user: expenses
+    region: singapore
+    plan: basic-256mb
+    postgresMajorVersion: "18"
