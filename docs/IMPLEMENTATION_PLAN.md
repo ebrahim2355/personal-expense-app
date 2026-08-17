@@ -6,11 +6,15 @@
 - Commit every Prisma migration and use `prisma migrate deploy` outside local
   schema development. Never use `prisma db push` on shared databases.
 - Use only integer poisha for money and pure integer split/settlement functions.
-- Keep Flutter local-first: one Drift transaction updates the visible expense
-  projection and durable outbox.
+  Every stored amount is a whole number of taka, so `amountMinor` is always a
+  multiple of `100`; both ends reject a remainder instead of rounding it.
+- Keep Flutter local-first: one Drift transaction updates the visible projection
+  for expenses, spending periods, and loans, and the durable outbox.
 - Keep sync serialized, cursors transactional, mutation semantics immutable once
   first sent, deletions as tombstones, and server snapshots authoritative on
   conflict.
+- Keep every synchronized entity on the one mutation route, the one outbox, and
+  the one change feed, discriminated by `entityType`.
 - Run PostgreSQL integration tests against a disposable PostgreSQL database;
   never substitute SQLite.
 
@@ -150,7 +154,8 @@ paginated bootstrap, and local-data-retention tests.
 
 ### Milestone 6 — Flutter expense UI and dashboard (complete)
 
-Delivered:
+Delivered, as of this milestone. Milestone 9 later replaced the dashboard's month
+range with the open spending period and added search:
 
 - Material 3 dashboard with current Dhaka month, date ranges, local totals,
   per-member paid/allocated amounts, exact settlement, recent/empty states, and
@@ -213,10 +218,50 @@ npm.cmd run stack:test:down
 ```
 
 Exit criterion met locally: ten mobile real-stack scenarios and all 28 API tests
-pass against PostgreSQL. A two-installation hardware smoke pass remains part of
-release validation, using the deterministic checklist in
+pass against PostgreSQL. Milestone 9 raised the suite to thirteen scenarios. A
+two-installation hardware smoke pass remains part of release validation, using
+the deterministic checklist in
 `docs/REAL_STACK_TESTING.md`. Android background timing remains explicitly
 best-effort and is not used as a deterministic test completion signal.
+
+### Milestone 9 — spending periods, lending ledger, whole taka, and search (complete)
+
+Delivered:
+
+- `SpendingPeriod` and `LoanEntry` Prisma models, their migration, a partial
+  unique index that allows exactly one open period per household, and an
+  `Expense.periodId` composite foreign key;
+- whole-taka money at every layer: OpenAPI `multipleOf: 100`, Zod and Dart
+  validation, a `amountMinor % 100 = 0` database check, and a one-time backfill
+  that gives each household a first open period, assigns existing expenses to it,
+  rounds any sub-taka amount to the nearest whole taka with a one-taka floor, and
+  rewrites stored change snapshots and mutation receipts to the new shape;
+- period create/close mutations sharing the existing mutation route, outbox, and
+  change feed through `entityType` (`EXPENSE`, `PERIOD`, `LOAN`), with
+  `PERIOD_ALREADY_OPEN`, `PERIOD_NOT_FOUND`, no reopen, and no period delete;
+- loan create/update/delete with a manual debtor, its own net total, and no
+  effect on the expense settlement figure;
+- Flutter period and loan repositories, a close-and-open-next transaction that
+  queues the close ahead of the next period's create, a period-scoped dashboard
+  without a range control, a lending screen, and local-only history search over
+  notes, categories, payers, and amounts;
+- bootstrap ordering PERIOD → EXPENSE → LOAN so an expense never lands before its
+  period.
+
+Checks:
+
+```powershell
+npm.cmd run openapi:lint
+npm.cmd run check
+npm.cmd run mobile:check
+npm.cmd run test:real-stack
+```
+
+Exit criterion met: the API unit and PostgreSQL integration suites, the Flutter
+suite, and thirteen real-stack scenarios pass, including period-close
+convergence across devices, loan CRUD across devices, and a server-side
+whole-taka rejection. The manual two-installation checklist in
+`docs/REAL_STACK_TESTING.md` remains part of release validation.
 
 ### Milestone 8 — Railway staging, CI, and release hardening
 
@@ -260,10 +305,18 @@ it would re-hash/reset PINs on every release.
 | Cross-household query regression | Data disclosure | Composite foreign keys, identity-derived filters, explicit isolation integration test. |
 | Railway connection exhaustion | API outages | Configured bounded pool/timeout; observe staging and tune to Railway plan. |
 | Android background delay | Stale remote view | Foreground/manual triggers; honest best-effort WorkManager messaging. |
+| Whole-taka backfill rewrites history | Silently altered past amounts | One committed migration that rounds to the nearest taka with a one-taka floor; back up before deploying it, and treat it as irreversible. |
+| Two devices opening a period at once | Two open periods, split dashboard | Partial unique index on the open period, `PERIOD_ALREADY_OPEN` rejection, close queued before the next create; real-stack close-convergence scenario. |
+| Loans mistaken for expense settlement | Wrong amount actually paid | Separate tables, separate net total, no shared query; tests assert the settlement figure does not move when a loan is recorded. |
 
 ## 5. Scope guard
 
+Spending periods, the lending ledger, whole-taka amounts, and local history
+search are in scope and implemented; do not remove them or reintroduce a
+month-based dashboard range without an explicit product revision.
+
 Do not add budgets, custom split percentages, receipts, notifications, recurring
 expenses, bank integrations, iOS, web administration, public registration,
-member management, additional households, or server dashboard summaries without
+member management, additional households, sub-taka amounts, automatic loans
+derived from expenses, or server-side search or dashboard summaries without
 an explicit product/architecture revision.
