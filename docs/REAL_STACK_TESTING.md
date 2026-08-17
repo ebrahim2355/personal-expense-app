@@ -45,7 +45,7 @@ npm.cmd run stack:test:down
 
 The cleanup command refuses to run unless `NODE_ENV=test`, `DATABASE_URL` and
 `TEST_DATABASE_URL` are identical, and the decoded database name ends in
-`-test` or `_test`. It truncates only the six application tables in that
+`-test` or `_test`. It truncates only the eight application tables in that
 database. Never point either test variable at development, staging, or
 production.
 
@@ -69,6 +69,16 @@ The real-stack test deterministically proves:
    which later synchronizes.
 10. `2026-07-31T18:00:00Z` is in August in Asia/Dhaka while the instant one
     second earlier remains in July.
+11. Closing a period settles it on both devices, opens exactly one successor with
+    the next sequence number, leaves the already-recorded expense on the settled
+    period, and files the next expense against the new open period.
+12. A hand-recorded loan created on one device reaches the other with its debtor,
+    amount, and net total, survives an edit that flips the debtor, and disappears
+    as a tombstone after a delete — while the expense settlement figure never
+    moves.
+13. A sub-taka amount forced into the outbox is refused by the server as
+    `INVALID_MUTATION`, the round trip still completes, that one row is marked
+    `NEEDS_ATTENTION`, and it is never retried.
 
 ## Interactive local API
 
@@ -146,10 +156,19 @@ have its own app data. Keep the API readiness endpoint open in a third terminal.
    and totals on the other.
 7. Create an expense offline, force-stop and relaunch that app before reconnecting,
    and confirm its pending row survives and later synchronizes.
-8. In a debug build, open Settings and confirm cursor preview, pending count,
-   last result, and last-success time change after sync. Correlate request IDs in
-   mobile/API logs; no PIN, JWT, refresh token, Authorization header, database
-   URL, or expense payload should appear.
+8. On A, close the current spending period. Sync both. Confirm both devices show
+   one open period with an empty dashboard, that the settled period keeps its
+   expenses in History, and that a new expense on B lands in the new period.
+9. Record a loan on A for a whole-taka amount, sync both, and confirm B shows the
+   same debtor, amount, and lending net total, and that the expense settlement
+   figure on the dashboard is unchanged. Edit the loan on B, delete it on A, and
+   confirm both devices agree after a sync.
+10. Try to enter an amount with a decimal point, a thousands separator, or `0` on
+    either device and confirm the form refuses it before any row is written.
+11. In a debug build, open Settings and confirm cursor preview, pending count,
+    last result, and last-success time change after sync. Correlate request IDs in
+    mobile/API logs; no PIN, JWT, refresh token, Authorization header, database
+    URL, or expense payload should appear.
 
 Android WorkManager is best effort and cannot guarantee an immediate background
 run. Foreground resume and manual sync are the authoritative manual checks.
