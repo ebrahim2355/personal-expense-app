@@ -273,18 +273,25 @@ details.
 
 ## Production deployment and Android installation
 
-The committed `railway.toml` defines the API build, production migration,
-start, readiness, and restart behavior. The complete operator runbook is
-[docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md), including:
+Two hosts are described, and their committed configuration files coexist
+because each platform ignores the other's. `railway.toml` and `render.yaml`
+define the same API build, production migration, start, and readiness contract.
 
-- Railway PostgreSQL attachment, environment variables, logs, one-off member
-  provisioning, key/PIN rotation, backup/restore, rollback, and smoke tests.
-- Android production URL, package/version/icon ownership, upload-keystore setup,
-  signed APK and app-bundle commands, direct installation, data-preserving
-  upgrades, SQLite migration rules, and rollback constraints.
+- [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md) is the Railway
+  runbook and the home of everything platform-independent: Android production
+  URL, package/version/icon ownership, upload-keystore setup, signed APK and
+  app-bundle commands, direct installation, data-preserving upgrades, SQLite
+  migration rules, rollback constraints, the irreversible whole-taka migration
+  warning, and the production smoke test.
+- [docs/RENDER_DEPLOYMENT.md](docs/RENDER_DEPLOYMENT.md) covers the Render
+  Blueprint, its free-instance limitations, provisioning with and without a
+  service shell, and moving live data off Railway.
 
-No external Railway resource is created by repository commands. Creating or
-modifying a live Railway project remains an explicit operator action.
+Both cover PostgreSQL attachment, environment variables, logs, one-off member
+provisioning, key/PIN rotation, and backup/restore for their own platform.
+
+No external Railway or Render resource is created by repository commands.
+Creating or modifying a live project remains an explicit operator action.
 
 ## Security and scope
 
@@ -304,4 +311,6 @@ Further guidance:
 - [Architecture](docs/ARCHITECTURE.md)
 - [Implementation plan](docs/IMPLEMENTATION_PLAN.md)
 - [Local real-stack and two-client testing](docs/REAL_STACK_TESTING.md)
+- [Railway deployment and Android release](docs/PRODUCTION_DEPLOYMENT.md)
+- [Render deployment](docs/RENDER_DEPLOYMENT.md)
 - [Repository rules](AGENTS.md)
