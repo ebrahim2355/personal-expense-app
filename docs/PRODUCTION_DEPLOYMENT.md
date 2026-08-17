@@ -120,6 +120,15 @@ deployment. Database migrations must remain backward compatible with the prior
 API release; when they are not, restore the pre-change backup before redeploying
 the old API. Prisma has no automatic down migration in this workflow.
 
+The `20260816053800_periods_loans_whole_taka` migration rewrites data. It creates
+one open spending period per household, assigns every existing expense to it,
+rounds any sub-taka `Expense.amountMinor` to the nearest whole taka with a
+one-taka floor, and rewrites the stored `ExpenseChange.snapshot` and
+`ProcessedMutation.result` documents to match the new strict shape. There is no
+down migration, and the original sub-taka values are not recoverable from the
+database afterwards. Take an on-demand backup immediately before deploying it,
+and note that redeploying an older API cannot restore the old amounts.
+
 ## Android identity, icon, and production URL
 
 - App name: **Household Expenses**.
@@ -216,11 +225,15 @@ which would erase local data.
 1. Confirm all three health endpoints, then inspect logs for the request IDs.
 2. Sign in as Sumon on one phone and Ebrahim on the other; verify a wrong PIN has
    the same generic failure and returns no diagnostic details.
-3. Add an odd-poisha expense on phone A, manually sync, sync phone B, and verify
-   the payer receives the one-poisha remainder in settlement.
+3. Add an odd-taka expense on phone A, manually sync, sync phone B, and verify
+   the payer receives the one-taka remainder in settlement.
 4. Edit on phone B, sync both ways, then soft-delete and verify the tombstone is
    reflected on phone A.
 5. Disable networking, add an expense, restart the app, restore networking, and
    verify the durable outbox synchronizes without duplication.
-6. Install the next higher-build-number APK with `adb install -r`; verify the
+6. Close the spending period on phone A, sync both, and verify both phones show
+   one open period and keep the settled period's expenses in History.
+7. Record a loan on phone A, sync both, and verify phone B shows the same lending
+   net total while the expense settlement figure is unchanged.
+8. Install the next higher-build-number APK with `adb install -r`; verify the
    existing expense history remains before and after synchronization.
