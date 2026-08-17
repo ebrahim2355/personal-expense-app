@@ -5,6 +5,12 @@ does not contain credentials and does not authorize creating or changing live
 resources. Keep the repository root as Railway's service root so npm workspaces,
 the root lockfile, and `railway.toml` are all available.
 
+Deploying to Render instead? The hosting steps are in
+[`RENDER_DEPLOYMENT.md`](RENDER_DEPLOYMENT.md), which also covers moving live
+data across. Everything below from **Android identity, icon, and production URL**
+onwards is platform-independent and applies to either host; so do the migration
+warning and the production smoke test.
+
 ## Railway PostgreSQL and API
 
 1. Create a Railway project, then add a PostgreSQL database from **New** >
