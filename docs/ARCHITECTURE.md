@@ -15,7 +15,8 @@ Railway PostgreSQL
 
 The API is the authentication and canonical synchronization boundary. Flutter
 renders from Drift and will compute dashboard totals locally, so expense data
-remains available offline. There is no server summary endpoint.
+remains available offline. There is no server summary endpoint and no server
+search endpoint; history search runs against local rows.
 
 The repository's only HTTP contract is
 `packages/contracts/openapi.yaml`. Route code validates with Zod but must stay
@@ -41,51 +42,69 @@ bodies are reconstructed from Zod-validated fields; there is no mass assignment.
 
 ## 2.1 Implemented mobile data boundaries
 
-- `lib/src/domain`: immutable expense/session models and exact wire-enum
-  mappings. `amountMinor` is a Dart `int`; no money path uses `double`.
+- `lib/src/domain`: immutable expense/period/loan/session models and exact
+  wire-enum mappings. `amountMinor` is a Dart `int` holding a whole number of
+  taka in poisha; no money path uses `double`.
 - `lib/src/data/local`: Drift tables, generated database code, row/domain
   mapping, and explicit schema migration strategy.
 - `lib/src/data/remote`: contract DTOs, Dio transport, error classification,
   and an authenticated request client.
 - `lib/src/data/security`: token-store abstraction and Android secure-storage
   implementation. Tokens never enter Drift or ordinary preferences.
-- `lib/src/data/repositories`: UI-facing expense/authentication operations.
+- `lib/src/data/repositories`: UI-facing expense/period/loan/authentication
+  operations, plus the shared local-mutation event type all three ledgers
+  announce writes on.
 - `lib/src/application`: session state, serialized sync, conflict notices, and
   launch/resume/mutation/manual/connectivity triggers.
-- `lib/src/presentation`: Material 3 login, dashboard, add/edit, history,
-  settings, reusable expense/sync widgets, and Riverpod view state. Widgets use
-  repository/domain abstractions and primitive status streams rather than Drift
-  rows or Dio.
+- `lib/src/presentation`: Material 3 login, dashboard, add/edit, lending,
+  history, settings, reusable expense/loan/sync widgets, and Riverpod view
+  state. Widgets use repository/domain abstractions and primitive status
+  streams rather than Drift rows or Dio.
 - `lib/src/background`: network-constrained, best-effort Android WorkManager
   scheduling and headless synchronization.
 - `lib/src/providers.dart`: Riverpod dependency graph. Widgets consume domain
   streams and application services, never raw Drift or Dio objects.
 
-The local schema has three tables:
+The local schema has five tables:
 
-1. `local_expenses` stores server-compatible fields, the authoritative server
-   version/timestamps when known, a local modification instant, soft deletion,
-   and `SYNCED`, `PENDING`, or `NEEDS_ATTENTION` projection state.
-2. `outbox_mutations` stores an auto-incrementing local order, unique mutation
-   UUID, entity UUID, action, base version, frozen JSON payload, creation time,
-   attempt count/times, retry deadline, last error code, and status.
-3. `sync_metadata` is a singleton holding household/member identity, the last
+1. `local_expenses` stores server-compatible fields including the owning
+   `period_id`, the authoritative server version/timestamps when known, a local
+   modification instant, soft deletion, and `SYNCED`, `PENDING`, or
+   `NEEDS_ATTENTION` projection state. `period_id` is nullable, because a device
+   can record an expense before its first bootstrap knows a period.
+2. `local_periods` stores the period UUID, sequence number, opened instant,
+   nullable closed instant, optional note, server version/timestamps, and
+   projection state. It has no soft-delete column.
+3. `local_loans` stores the entry UUID, debtor member key, whole-taka amount,
+   client-stamped instant, optional note, server version/timestamps, soft
+   deletion, and projection state.
+4. `outbox_mutations` stores an auto-incrementing local order, unique mutation
+   UUID, entity UUID, entity type, action, base version, frozen JSON payload,
+   creation time, attempt count/times, retry deadline, last error code, and
+   status. `entity_type` defaults to `EXPENSE`, so a row queued before periods
+   and loans existed still names the right entity after an upgrade.
+5. `sync_metadata` is a singleton holding household/member identity, the last
    committed opaque cursor, resumable bootstrap token/watermark, and the last
    successful full-sync instant used by the UI. It does
    not hold access or refresh tokens.
 
 Create/edit/delete writes the projection and outbox in one SQLite transaction,
-then emits a trigger after commit. Sync claims at most the earliest unresolved
-mutation per entity, allowing independent entities in one server batch while
-preserving per-entity dependencies. An accepted result deletes its receipt and
-rebases the next local mutation. A conflict deletes that entity's dependent
-outbox chain, stores the returned server snapshot/tombstone, and emits a UI
-notice. Validation/protocol failures stop blind retries; transient HTTP/network
-failures persist capped exponential backoff with jitter and honor `Retry-After`.
+then emits a trigger after commit. Closing a spending period is one transaction
+holding the close update, the next period's insert, and both outbox rows, with
+the close queued first so the server never sees two open periods. Sync claims at
+most the earliest unresolved mutation per entity, keyed by entity type and
+entity UUID, allowing independent entities in one server batch while preserving
+per-entity dependencies. An accepted result deletes its receipt and rebases the
+next local mutation. A conflict deletes that entity's dependent outbox chain,
+stores the returned server snapshot/tombstone, and emits a UI notice naming the
+entity type. Validation/protocol failures stop blind retries; transient
+HTTP/network failures persist capped exponential backoff with jitter and honor
+`Retry-After`.
 
 A 401 causes one single-flight refresh-token rotation and exactly one retry of
 the original request. A failed refresh clears secure tokens and moves session
-state to signed out without deleting expenses, sync metadata, or outbox rows.
+state to signed out without deleting expenses, periods, loans, sync metadata, or
+outbox rows.
 
 ## 3. Canonical PostgreSQL model
 
@@ -111,14 +130,51 @@ state to signed out without deleting expenses, sync metadata, or outbox rows.
   storage. It is never persisted.
 - Reusing a rotated/revoked token revokes remaining tokens in its family.
 
+### `SpendingPeriod`
+
+- Client-generated UUID primary key and authenticated `householdId`.
+- `sequenceNumber INT` is unique per household and numbers the period the
+  members see; `(householdId, sequenceNumber)` is unique.
+- `startedAt TIMESTAMPTZ(3)`, nullable `closedAt TIMESTAMPTZ(3)`, nullable
+  `note VARCHAR(500)`, positive version, server timestamps, and nonnegative
+  `lastChangeSequence`.
+- A partial unique index over `householdId` where `closedAt IS NULL` allows at
+  most one open period per household, so two devices racing to open one cannot
+  both win.
+- There is no `deletedAt`. Active expenses reference the period, so a period is
+  archived by closing it and never removed.
+- An accepted create starts at version 1. The close is an update and increments
+  exactly once.
+
+### `LoanEntry`
+
+- Client-generated UUID primary key and authenticated `householdId`.
+- `amountMinor BIGINT` under database checks for `100..99_999_999_999` poisha
+  and `amountMinor % 100 = 0`, the same whole-taka rule as an expense amount.
+- A composite debtor foreign key enforcing that the debtor is in the same
+  household. The creditor is the other member and is not stored.
+- `occurredAt TIMESTAMPTZ(3)` assigned by the client at creation, nullable
+  `note VARCHAR(500)`, positive version, server timestamps, nullable
+  `deletedAt`, and nonnegative `lastChangeSequence`.
+- Loans are a separate ledger. No query joins them to expenses, and no server
+  code combines the two totals.
+- An accepted create starts at version 1. Update/delete increment exactly once.
+  Delete sets `deletedAt`; it never removes the row.
+
 ### `Expense`
 
 - Client-generated UUID primary key and authenticated `householdId`.
-- `amountMinor BIGINT` with a database check for
-  `1..99_999_999_999` poisha. JSON input/output is a bounded safe integer;
-  TypeScript converts to/from `bigint` only at the Prisma boundary.
+- `amountMinor BIGINT` with database checks for `1..99_999_999_999` poisha and
+  `amountMinor % 100 = 0`, which together make `100` the smallest storable
+  amount and permit only whole taka. JSON input/output is a bounded safe
+  integer; TypeScript converts to/from `bigint` only at the Prisma boundary.
 - Enum category and a composite payer foreign key enforcing that the payer is
   in the same household.
+- A composite `periodId` foreign key enforcing that the spending period belongs
+  to the same household. The column is `NOT NULL`: an omitted wire `periodId`
+  resolves to the household's open period, and a named period only has to
+  exist, because an expense recorded offline before a close still belongs to the
+  period it was recorded in.
 - `occurredAt TIMESTAMPTZ(3)`, nullable `note VARCHAR(500)`, positive version,
   server timestamps, nullable `deletedAt`, and nonnegative
   `lastChangeSequence`.
@@ -127,22 +183,29 @@ state to signed out without deleting expenses, sync metadata, or outbox rows.
 
 ### `ProcessedMutation`
 
-- Client mutation UUID primary key, household/member/entity IDs, operation,
-  canonical SHA-256 request hash, JSONB result, and timestamp.
-- Written in the same transaction as any accepted expense and change event.
+- Client mutation UUID primary key, household/member/entity IDs, entity type,
+  operation, canonical SHA-256 request hash, JSONB result, and timestamp.
+- `entityType` defaults to `EXPENSE` so receipts written before periods and
+  loans existed keep a correct meaning.
+- Written in the same transaction as any accepted expense, period, or loan and
+  its change event.
 - Same UUID plus same semantics returns the stored result. Same UUID plus
   different semantics returns per-item `REJECTED/IDEMPOTENCY_KEY_REUSED`.
-- Invalid operation-specific expense data can also receive a durable rejected
+- Invalid operation-specific data can also receive a durable rejected
   receipt when its outer mutation identity is valid.
 
 ### `ExpenseChange`
 
 - PostgreSQL `BIGSERIAL` sequence is the global monotonic event cursor.
+- The table keeps its original name but carries the change feed for every
+  synchronized entity. `entityType`, defaulting to `EXPENSE`, selects which
+  snapshot shape the JSONB document holds.
 - Household/entity/version, operation (`CREATED`, `UPDATED`, `DELETED`), unique
   origin mutation UUID, complete canonical JSONB snapshot, and server time.
 - Household queries use `sequence > decodedCursor`, ascending order, and
   `limit + 1` to calculate `hasMore`.
-- A deleted snapshot is a full expense tombstone with non-null `deletedAt`.
+- A deleted snapshot is a full expense or loan tombstone with non-null
+  `deletedAt`. A period change is never `DELETED`.
 
 Sequence values may contain gaps after rolled-back PostgreSQL transactions; the
 ordering is monotonic, not required to be contiguous.
@@ -189,8 +252,11 @@ Synchronization:
 - `GET /v1/sync/changes`: signed cursor and page size 1–250 (default 100).
 - `GET /v1/sync/bootstrap`: signed page token and the same page bounds.
 
-There are no parallel online CRUD shapes. Client expense writes always use the
-mutation route; server-to-client expense state always uses bootstrap/changes.
+There are no parallel online CRUD shapes. Client writes to all three
+synchronized entities always use the mutation route; server-to-client state
+always uses bootstrap/changes. Every mutation candidate, mutation result, change
+row, and bootstrap item names its `entityType`, which defaults to `EXPENSE` and
+selects the single payload key that is present.
 
 Request middleware assigns/validates `X-Request-ID`, applies Helmet, enforces
 HTTPS in production behind an explicitly trusted proxy count, accepts native
@@ -207,24 +273,49 @@ duplicate a valid sibling.
 
 For one candidate:
 
-1. Parse operation-specific rules and calculate a canonical request hash.
+1. Parse operation-specific rules and calculate a canonical request hash. The
+   parse is selected by `entityType`, so a period payload is never read as an
+   expense.
 2. Look up `(mutationId, authenticated household)`. Return the stored result for
    an identical retry, or reject semantic reuse.
-3. For create, require `baseVersion = 0`, a complete expense, an unused entity
-   UUID, and a same-household enabled payer.
+3. For create, require `baseVersion = 0`, a complete payload for that entity
+   type, and an unused entity UUID. An expense also requires a same-household
+   enabled payer, otherwise `REJECTED/PAYER_NOT_FOUND`, and a resolvable
+   spending period, otherwise `REJECTED/PERIOD_NOT_FOUND`. A loan requires a
+   same-household enabled debtor, otherwise `REJECTED/PAYER_NOT_FOUND`.
 4. For update/delete, condition the SQL write on entity UUID, household,
-   `version = baseVersion`, and `deletedAt IS NULL`.
+   `version = baseVersion`, and `deletedAt IS NULL`. A period has no
+   `deletedAt`, so its update is conditioned on version alone.
 5. If the conditional write misses but the scoped entity exists, store and
    return `CONFLICT/VERSION_CONFLICT` plus the current canonical
-   expense/tombstone. If it does not exist in that household, return
+   snapshot/tombstone. If it does not exist in that household, return
    `REJECTED/ENTITY_NOT_FOUND` without exposing another household's row.
 6. On acceptance, assign server UTC timestamps/version, insert a change snapshot,
-   link its sequence to the expense, and insert the processed result atomically.
+   link its sequence to the entity, and insert the processed result atomically.
 7. Retry PostgreSQL serializable write conflicts (`P2034`) at most three times.
+
+Entity-specific rules:
+
+- An omitted expense `periodId` resolves to the household's open period. A named
+  period only has to exist in the household: a closed period still accepts an
+  offline-recorded expense, so a create made before a close is not lost.
+- Creating a period whose `closedAt` is `null` while another open period exists
+  returns `REJECTED/PERIOD_ALREADY_OPEN`. The partial unique index enforces the
+  same rule when two devices race.
+- Updating a period that no longer exists in the household returns
+  `REJECTED/PERIOD_NOT_FOUND`, and clearing `closedAt` on a settled period
+  returns `REJECTED/INVALID_MUTATION`: a period is never reopened.
+- A `PERIOD` `DELETE` is always rejected. The mutation schema has no delete
+  variant for periods, so it fails parsing as `REJECTED/INVALID_MUTATION` before
+  any row is read.
+- An amount that is not a whole number of taka is `REJECTED/INVALID_MUTATION`
+  for both expenses and loans, whatever the client believed.
 
 The mobile conflict rule is server-wins: transactionally replace Drift with the
 returned snapshot/tombstone, delete the conflicting and dependent entity outbox
-items, and show a brief conflict message.
+items, and show a brief conflict message naming the entity type. A rejected
+result instead marks that one outbox row `NEEDS_ATTENTION` with its returned
+code, leaves the rest of the batch alone, and is never retried.
 
 ## 7. Pull cursors, tombstones, and first-device bootstrap
 
@@ -264,20 +355,31 @@ guarantee immediate or exact background execution.
 ## 8. Money and time ownership
 
 The API validates and stores canonical expense values but does not calculate a
-dashboard response. Flutter sums synchronized active rows for the selected
-`Asia/Dhaka` half-open interval.
+dashboard response. Flutter sums synchronized active rows itself: the dashboard
+sums the household's open spending period, and History sums the selected
+`Asia/Dhaka` half-open interval when one is chosen.
 
-For expense `A` poisha:
+Every stored amount is a whole number of taka, so `amountMinor` is always a
+multiple of `100`. Poisha remains the storage unit for both entities, and both
+ends reject a remainder rather than rounding it.
+
+For expense `A` poisha, with `T = A ~/ 100` taka:
 
 ```text
-lowerHalf = A ~/ 2
-payerAllocated = lowerHalf + (A % 2)
+lowerHalf = (T ~/ 2) * 100
+payerAllocated = (T ~/ 2 + T % 2) * 100
 otherAllocated = lowerHalf
 ```
 
-For `101` poisha paid by Sumon, Sumon is allocated 51 and Ebrahim 50. Sumon's
-balance is `101 - 51 = 50`, so the settlement is “Ebrahim owes Sumon ৳0.50”.
-No JavaScript/Dart floating-point path is allowed for money.
+For `10100` poisha (৳101) paid by Sumon, Sumon is allocated `5100` and Ebrahim
+`5000`. Sumon's balance is `10100 - 5100 = 5000`, so the settlement is “Ebrahim
+owes Sumon ৳50”. The odd taka always lands on the payer, and no split ever
+produces a sub-taka figure. No JavaScript/Dart floating-point path is allowed for
+money.
+
+Loans are summed independently: the lending net total is `ebrahimOwesMinor -
+sumonOwesMinor` over active loan rows, and it never moves the expense settlement
+figure.
 
 Clients send `occurredAt` with an explicit RFC 3339 offset. PostgreSQL stores the
 instant as `TIMESTAMPTZ`; responses use UTC ISO timestamps. Flutter alone turns
@@ -308,23 +410,33 @@ The Flutter suite uses in-memory Drift and fake HTTP/sync boundaries to cover
 immediate offline reads, mutation retry/idempotency, concurrent trigger
 single-flight behavior, change pagination, bootstrap handoff, tombstones,
 conflicts, refresh-once behavior, and local-data retention after auth/network
-failure. Pure tests cover BDT parsing/formatting, odd-poisha allocation,
-settlement, and IANA `Asia/Dhaka` month/day boundaries. Widget tests cover login
-errors, exact dashboard totals, empty/small-screen states, local add/edit/delete,
-duplicate submission, offline status, and server-wins conflict feedback.
+failure. Repository tests additionally cover period open/close bookkeeping, the
+single-open-period rule, loan create/edit/delete with its own outbox entity type,
+and local search over notes, categories, payers, and amounts. Pure tests cover
+BDT parsing/formatting, whole-taka rejection at both bounds, odd-taka allocation,
+settlement, the lending net total, and IANA `Asia/Dhaka` month/day boundaries.
+Widget tests cover login errors, exact dashboard totals for the open period, the
+close-period flow, the lending screen, history search, empty/small-screen states,
+local add/edit/delete, duplicate submission, offline status, and server-wins
+conflict feedback.
 The backend suite covers login/failure/unauthorized requests, refresh rotation
-and logout, validation/money boundaries, Dhaka-to-UTC boundaries, duplicate and
-concurrent offline creates, update/delete propagation, stale-version conflict,
-cursor/bootstrap pagination, tombstones, and household isolation. Integration
-tests require `TEST_DATABASE_URL` for an actual disposable PostgreSQL database;
-SQLite is never substituted.
+and logout, validation/money boundaries including whole-taka rejection, period
+create/close rules (`PERIOD_ALREADY_OPEN`, `PERIOD_NOT_FOUND`, a rejected period
+delete, and no reopen), loan create/update/delete, expense-to-period assignment,
+Dhaka-to-UTC boundaries, duplicate and concurrent offline creates, update/delete
+propagation, stale-version conflict, cursor/bootstrap pagination for all three
+entity types, tombstones, and household isolation. Integration tests require
+`TEST_DATABASE_URL` for an actual disposable PostgreSQL database; SQLite is never
+substituted.
 
 The real-stack suite adds two independent file-backed Drift databases over the
-production Dio/auth/sync path, the compiled Express API, and PostgreSQL 18. It
-injects failures at transport boundaries to prove lost-response idempotency and
-interrupted cursor-page recovery without timing sleeps. Test cleanup is accepted
-only for an explicitly matched `_test`/`-test` database URL. Request IDs connect
-mobile and API logs; logs contain mutation IDs, statuses, cursor/page counts, and
-timings, but omit credentials, Authorization headers, database URLs, and expense
-payloads. Debug Settings exposes only cursor preview, pending count, last sync
-result, and last success time.
+production Dio/auth/sync path, the compiled Express API, and PostgreSQL 18. Its
+thirteen scenarios include period-close convergence across devices, loan CRUD
+across devices, and a server-side whole-taka rejection. It injects failures at
+transport boundaries to prove lost-response idempotency and interrupted
+cursor-page recovery without timing sleeps. Test cleanup is accepted only for an
+explicitly matched `_test`/`-test` database URL. Request IDs connect mobile and
+API logs; logs contain mutation IDs, statuses, cursor/page counts, and timings,
+but omit credentials, Authorization headers, database URLs, and expense payloads.
+Debug Settings exposes only cursor preview, pending count, last sync result, and
+last success time.
