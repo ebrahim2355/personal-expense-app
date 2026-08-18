@@ -5,6 +5,7 @@ import 'package:houseexpenses/src/data/local/app_database.dart';
 
 import 'generated/schema.dart';
 import 'generated/schema_v2.dart' as v2;
+import 'generated/schema_v3.dart' as v3;
 
 /// Drift generates the historical schemas as bare `TableInfo`s with no data
 /// classes, so fixtures are inserted column by column.
@@ -97,4 +98,43 @@ void main() {
       expect(pending.single.entityType, 'EXPENSE');
     },
   );
+
+  test('migrates from v3 to v4', () async {
+    final connection = await verifier.startAt(3);
+    final database = AppDatabase(connection);
+    addTearDown(database.close);
+
+    await verifier.migrateAndValidate(database, 4);
+  });
+
+  test('leaves an upgraded device announcing and still owed the ask', () async {
+    final schema = await verifier.schemaAt(3);
+    final oldDatabase = v3.DatabaseAtV3(schema.newConnection());
+    final recordedAt = DateTime.utc(2026, 8, 14, 9);
+    await oldDatabase
+        .into(oldDatabase.syncMetadata)
+        .insert(
+          rawRow(<String, Expression<Object>>{
+            'singleton_id': const Variable<int>(1),
+            'member_key': const Variable<String>('EBRAHIM'),
+            'last_cursor': const Variable<String>('cursor-9'),
+            'updated_at': Variable<DateTime>(recordedAt),
+          }),
+        );
+    await oldDatabase.close();
+
+    final database = AppDatabase(schema.newConnection());
+    addTearDown(database.close);
+    await verifier.migrateAndValidate(database, 4);
+
+    final metadata = await database.readSyncMetadata();
+    // The sync state the device already had must survive untouched: a member who
+    // upgrades does not re-bootstrap.
+    expect(metadata.memberKey, 'EBRAHIM');
+    expect(metadata.lastCursor, 'cursor-9');
+    // Announcements default to on, and a null timestamp means the permission
+    // dialog has not been shown yet — so the next launch asks for it.
+    expect(metadata.householdActivityNotificationsEnabled, isTrue);
+    expect(metadata.notificationPermissionRequestedAt, isNull);
+  });
 }
