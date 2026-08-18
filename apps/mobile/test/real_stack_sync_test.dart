@@ -21,6 +21,11 @@ import 'package:houseexpenses/src/domain/loan.dart';
 import 'package:houseexpenses/src/domain/money.dart';
 import 'package:houseexpenses/src/domain/session.dart';
 import 'package:houseexpenses/src/domain/spending_period.dart';
+import 'package:houseexpenses/src/notifications/household_activity_notifier.dart';
+
+// Only the recording notifier is borrowed from the shared fakes: everything else
+// in this file talks to the real API, and a blanket import would shadow it.
+import 'support/fakes.dart' show RecordingActivityNotifier;
 
 const apiBaseUrl = String.fromEnvironment('REAL_STACK_API_BASE_URL');
 const sumonPin = String.fromEnvironment('REAL_STACK_SUMON_PIN');
@@ -649,6 +654,76 @@ void main() {
         stuck.attemptCount,
       );
     });
+
+    test('14. each device hears about the other member, never itself', () async {
+      final sumon = await signedInClient(
+        'scenario-14-sumon',
+        HouseholdMember.sumon,
+      );
+      final created = await sumon.repository.create(
+        fixtureDraft(amountMinor: 41500, note: 'scenario-14'),
+      );
+
+      // One run pushes the expense and then pulls the change the server wrote
+      // for it, by which point the outbox row has already been acknowledged and
+      // deleted. Nothing local distinguishes that change from the other
+      // member's, so this staying empty is the server's attribution working.
+      await sumon.syncCompleted();
+      expect(sumon.announcedFor(created.id), isEmpty);
+
+      // Ebrahim installs afterwards and receives the expense through bootstrap,
+      // which announces nothing — including everything earlier scenarios left in
+      // the shared database.
+      final ebrahim = await signedInClient(
+        'scenario-14-ebrahim',
+        HouseholdMember.ebrahim,
+      );
+      expect(ebrahim.notifier.announced, isEmpty);
+      expect((await ebrahim.only(created.id)).amountMinor, 41500);
+
+      await sumon.repository.edit(
+        created.id,
+        fixtureDraft(amountMinor: 41600, note: 'scenario-14-edited'),
+      );
+      await sumon.syncCompleted();
+      await ebrahim.syncCompleted();
+
+      final edited = ebrahim.announcedFor(created.id);
+      expect(edited, hasLength(1));
+      expect(edited.single.actor, HouseholdMember.sumon);
+      expect(edited.single.operation, ChangeOperation.updated);
+      expect(edited.single.snapshot.expense?.amountMinor, 41600);
+      expect(sumon.announcedFor(created.id), isEmpty);
+
+      await sumon.repository.delete(created.id);
+      await sumon.syncCompleted();
+      await ebrahim.syncCompleted();
+
+      final afterDelete = ebrahim.announcedFor(created.id);
+      expect(afterDelete, hasLength(2));
+      expect(afterDelete.last.operation, ChangeOperation.deleted);
+      expect(afterDelete.last.actor, HouseholdMember.sumon);
+      expect(sumon.announcedFor(created.id), isEmpty);
+
+      // The other direction, so attribution is read from the feed rather than
+      // assumed to be whoever is not this device.
+      final fromEbrahim = await ebrahim.repository.create(
+        fixtureDraft(
+          amountMinor: 41700,
+          payer: HouseholdMember.ebrahim,
+          note: 'scenario-14-ebrahim',
+        ),
+      );
+      await ebrahim.syncCompleted();
+      await sumon.syncCompleted();
+
+      expect(ebrahim.announcedFor(fromEbrahim.id), isEmpty);
+      final received = sumon.announcedFor(fromEbrahim.id);
+      expect(received, hasLength(1));
+      expect(received.single.actor, HouseholdMember.ebrahim);
+      expect(received.single.operation, ChangeOperation.created);
+      expect(received.single.snapshot.expense?.amountMinor, 41700);
+    });
   }, skip: realStackSkip);
 }
 
@@ -692,6 +767,7 @@ final class RealMobileClient {
     required this.transport,
     required this.authRepository,
     required this.coordinator,
+    required this.notifier,
   });
 
   static Future<RealMobileClient> open({
@@ -707,6 +783,7 @@ final class RealMobileClient {
     final repository = DriftExpenseRepository(database);
     final periods = DriftPeriodRepository(database);
     final loans = DriftLoanRepository(database);
+    final notifier = RecordingActivityNotifier();
     final tokenStore = MemoryTokenStore(existingTokens);
     final session = SessionController(tokenStore);
     await session.initialize();
@@ -729,6 +806,7 @@ final class RealMobileClient {
       api: DioExpenseSyncApi(authenticatedClient),
       pageSize: pageSize,
       clock: clock,
+      notifier: notifier,
     );
     final client = RealMobileClient._(
       database: database,
@@ -740,6 +818,7 @@ final class RealMobileClient {
       transport: transport,
       authRepository: authRepository,
       coordinator: coordinator,
+      notifier: notifier,
     );
     if (member != null) {
       await authRepository.login(member, pin ?? '');
@@ -756,7 +835,16 @@ final class RealMobileClient {
   final HttpTransport transport;
   final AuthRepository authRepository;
   final SyncCoordinator coordinator;
+
+  /// Stands in for the Android notification tray on this device.
+  final RecordingActivityNotifier notifier;
   bool _closed = false;
+
+  /// Everything this device would have announced about [entityId], across every
+  /// sync run so far.
+  List<HouseholdActivity> announcedFor(String entityId) => notifier.announced
+      .where((activity) => activity.snapshot.entityId == entityId)
+      .toList(growable: false);
 
   Future<void> syncCompleted() async {
     final report = await coordinator.synchronize();
