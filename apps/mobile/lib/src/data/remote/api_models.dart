@@ -487,23 +487,63 @@ final class EntitySnapshotDto {
 
 typedef BootstrapItemDto = EntitySnapshotDto;
 
+/// What the change feed says happened to an entity. Distinct from
+/// [MutationOperation]: that names what a client asked for, this names what the
+/// server recorded.
+enum ChangeOperation { created, updated, deleted }
+
+extension ChangeOperationWire on ChangeOperation {
+  String get wireName => switch (this) {
+    ChangeOperation.created => 'CREATED',
+    ChangeOperation.updated => 'UPDATED',
+    ChangeOperation.deleted => 'DELETED',
+  };
+
+  static ChangeOperation parse(String value) => switch (value) {
+    'CREATED' => ChangeOperation.created,
+    'UPDATED' => ChangeOperation.updated,
+    'DELETED' => ChangeOperation.deleted,
+    _ => throw FormatException('Unknown change operation: $value'),
+  };
+}
+
 final class ChangeDto {
   const ChangeDto({
     required this.cursor,
+    required this.operation,
     required this.originMutationId,
     required this.snapshot,
+    this.actorMember,
   });
 
-  factory ChangeDto.fromJson(Map<String, Object?> json) => ChangeDto(
-    cursor: _string(_required(json, 'cursor'), 'change.cursor'),
-    originMutationId: _string(
-      _required(json, 'originMutationId'),
-      'change.originMutationId',
-    ),
-    snapshot: EntitySnapshotDto.fromJson(json, 'change'),
-  );
+  factory ChangeDto.fromJson(Map<String, Object?> json) {
+    final actorValue = json['actorMember'];
+    return ChangeDto(
+      cursor: _string(_required(json, 'cursor'), 'change.cursor'),
+      operation: ChangeOperationWire.parse(
+        _string(_required(json, 'operation'), 'change.operation'),
+      ),
+      // The contract requires an author, but this stays lenient on purpose so an
+      // app pointed at an API deployed before change authorship keeps syncing.
+      // An unattributed change is simply never announced.
+      actorMember: actorValue == null
+          ? null
+          : HouseholdMemberWire.parse(
+              _string(actorValue, 'change.actorMember'),
+            ),
+      originMutationId: _string(
+        _required(json, 'originMutationId'),
+        'change.originMutationId',
+      ),
+      snapshot: EntitySnapshotDto.fromJson(json, 'change'),
+    );
+  }
 
   final String cursor;
+  final ChangeOperation operation;
+
+  /// Which member authored the change, or null when the server did not say.
+  final HouseholdMember? actorMember;
   final String originMutationId;
   final EntitySnapshotDto snapshot;
 
