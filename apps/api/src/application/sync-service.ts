@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { z } from 'zod';
 
-import type { SyncEntityType } from '../domain/constants.js';
+import type { MemberKey, SyncEntityType } from '../domain/constants.js';
 import { EXPENSE_CATEGORIES, MEMBER_KEYS } from '../domain/constants.js';
 import { AppError, validationIssues } from '../domain/errors.js';
 import type {
@@ -191,6 +191,12 @@ const mutationResultSchema = z.preprocess(
 type ChangeView = {
   cursor: string;
   operation: 'CREATED' | 'UPDATED' | 'DELETED';
+  /**
+   * The member who authored the change. A pulling device compares this against
+   * its own member to tell the other member's activity apart from its own
+   * writes echoing back on the same sync run.
+   */
+  actorMember: MemberKey;
   originMutationId: string;
 } & EntityPayload;
 
@@ -445,6 +451,7 @@ export class SyncService {
           row.sequence,
         ),
         operation: row.operation,
+        actorMember: row.actorMemberKey,
         originMutationId: row.originMutationId,
         ...storedEntityPayload(row.entityType, row.snapshot),
       })),
@@ -1318,6 +1325,7 @@ export class SyncService {
       entityType: SyncEntityType;
       entityVersion: number;
       operation: 'CREATED' | 'UPDATED' | 'DELETED';
+      actorMember: MemberKey;
       changedAt: Date;
       originMutationId: string;
       payload: EntityPayload;
@@ -1336,6 +1344,7 @@ export class SyncService {
         entityType: change.entityType,
         entityVersion: change.entityVersion,
         operation: change.operation,
+        actorMemberKey: change.actorMember,
         originMutationId: change.originMutationId,
         snapshot: jsonValue(snapshot),
         changedAt: change.changedAt,
@@ -1391,6 +1400,7 @@ export class SyncService {
       entityType: record.entityType,
       entityVersion: record.row.version,
       operation,
+      actorMember: identity.memberKey,
       changedAt: record.row.updatedAt,
       originMutationId: mutation.mutationId,
       payload,
