@@ -3,6 +3,13 @@
     <!-- Runtime permission on API 33+. Denying it leaves the app fully usable;
          only the household-activity notifications go quiet. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Lets the app show Android's own "allow background activity" dialog.
+         Without the exemption the OS drops this app to the RARE standby bucket
+         once the phone is idle and defers the fifteen-minute sync for hours, so
+         the other member's activity is announced late or not until the app is
+         next opened. Play restricts this permission; this app is sideloaded onto
+         two phones and never published, so the restriction does not apply. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:label="Household Expenses"
