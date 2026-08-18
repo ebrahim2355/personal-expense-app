@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keeps the notification status icon out of the release resource shrinker's
+     reach.
+
+     flutter_local_notifications resolves the small icon from the name string it
+     is initialized with, so nothing in Kotlin, Java, or another resource ever
+     references this drawable. The shrinker reads that as unreachable and
+     deletes it from the release APK, which is worse than a missing icon: the
+     plugin's initialize() then throws on the unresolvable name, so the channel
+     is never created, Android's permission dialog is never reached, and every
+     notification the app tries to post fails. Debug builds do not shrink
+     resources, which is what makes this invisible until release. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_stat_notification" />
