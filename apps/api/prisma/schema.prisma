@@ -183,6 +183,12 @@ model ExpenseChange {
   entityType       SyncEntityType  @default(EXPENSE)
   entityVersion    Int
   operation        ChangeOperation
+  /// Which member authored this change. Stored as the key rather than a member
+  /// relation because the feed is append-only history: the author of a past
+  /// change must not move if member rows are ever re-provisioned. A pulling
+  /// device compares this against its own member to tell the other member's
+  /// activity apart from its own writes echoing back.
+  actorMemberKey   MemberKey
   originMutationId String          @unique @db.Uuid
   snapshot         Json            @db.JsonB
   changedAt        DateTime        @default(now()) @db.Timestamptz(3)
