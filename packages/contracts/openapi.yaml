@@ -795,7 +795,7 @@ components:
     EntityChange:
       type: object
       additionalProperties: false
-      required: [cursor, entityType, operation, originMutationId]
+      required: [cursor, entityType, operation, actorMember, originMutationId]
       description: >-
         One synchronized change. Exactly one payload key is present, selected by
         entityType. PERIOD changes are never DELETED.
@@ -807,6 +807,13 @@ components:
         operation:
           type: string
           enum: [CREATED, UPDATED, DELETED]
+        actorMember:
+          allOf:
+            - $ref: '#/components/schemas/MemberKey'
+          description: >-
+            The member who authored this change. A pulling device compares it
+            against its own member to tell the other member's activity apart
+            from its own writes echoing back on the same sync run.
         originMutationId:
           type: string
           format: uuid
