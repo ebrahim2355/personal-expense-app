@@ -78,6 +78,8 @@ The lending ledger is summed separately as `ebrahimOwesMinor - sumonOwesMinor` o
 - Retry timeouts, connectivity failures, HTTP 429, and retryable 5xx responses with bounded exponential backoff and jitter. Honor `Retry-After`. Do not retry validation or authorization failures blindly.
 - Connectivity state is only a reason to try. Only an HTTP response establishes API reachability.
 - Trigger sync on launch, foreground resume, local mutation, manual refresh, network recovery while alive, and best-effort Android background work. Android does not guarantee immediate or exact background execution.
+- Every change row names its author in `actorMember`, which the server assigns from the authenticated identity. Decide notifications from that field alone. A missing outbox row does not identify the other member: acknowledging your own write deletes the row before the same change arrives in the feed.
+- Announce only the other member's changes, only from the change feed, and only after the page transaction has committed. Bootstrap never notifies, and an unattributed change — an older API — never notifies.
 
 ## Validation and security expectations
 
@@ -91,6 +93,6 @@ The lending ledger is summed separately as `ebrahimOwesMinor - sumonOwesMinor` o
 
 ## Scope boundaries
 
-In scope: login for the two fixed members, a dashboard scoped to the open spending period with settlement, closing a period to open the next one, add/view/edit/soft-delete expenses, a manual lending ledger, history filters and local search, offline local operation, and synchronization.
+In scope: login for the two fixed members, a dashboard scoped to the open spending period with settlement, closing a period to open the next one, add/view/edit/soft-delete expenses, a manual lending ledger, history filters and local search, offline local operation, synchronization, and Android notifications for the other member's synced activity.
 
-Out of scope: budgets, custom split percentages, receipts, notifications, recurring expenses, bank integration, iOS, web administration, public registration, new members, multiple households, sub-taka amounts, loans derived automatically from expenses, and server-side search or dashboard summaries.
+Out of scope: budgets, custom split percentages, receipts, push delivery through FCM (notifications arrive with background sync, so they inherit its delay), recurring expenses, bank integration, iOS, web administration, public registration, new members, multiple households, sub-taka amounts, loans derived automatically from expenses, and server-side search or dashboard summaries.
