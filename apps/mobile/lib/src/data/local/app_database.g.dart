@@ -2833,6 +2833,28 @@ class $SyncMetadataTable extends SyncMetadata
         ),
         defaultValue: const Constant<bool>(true),
       );
+  static const VerificationMeta _batteryExemptionRequestedAtMeta =
+      const VerificationMeta('batteryExemptionRequestedAt');
+  @override
+  late final GeneratedColumn<DateTime> batteryExemptionRequestedAt =
+      GeneratedColumn<DateTime>(
+        'battery_exemption_requested_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _lastBackgroundSyncAtMeta =
+      const VerificationMeta('lastBackgroundSyncAt');
+  @override
+  late final GeneratedColumn<DateTime> lastBackgroundSyncAt =
+      GeneratedColumn<DateTime>(
+        'last_background_sync_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
   @override
   List<GeneratedColumn> get $columns => [
     singletonId,
@@ -2846,6 +2868,8 @@ class $SyncMetadataTable extends SyncMetadata
     lastSuccessfulSyncAt,
     notificationPermissionRequestedAt,
     householdActivityNotificationsEnabled,
+    batteryExemptionRequestedAt,
+    lastBackgroundSyncAt,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2948,6 +2972,24 @@ class $SyncMetadataTable extends SyncMetadata
         ),
       );
     }
+    if (data.containsKey('battery_exemption_requested_at')) {
+      context.handle(
+        _batteryExemptionRequestedAtMeta,
+        batteryExemptionRequestedAt.isAcceptableOrUnknown(
+          data['battery_exemption_requested_at']!,
+          _batteryExemptionRequestedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_background_sync_at')) {
+      context.handle(
+        _lastBackgroundSyncAtMeta,
+        lastBackgroundSyncAt.isAcceptableOrUnknown(
+          data['last_background_sync_at']!,
+          _lastBackgroundSyncAtMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -3001,6 +3043,14 @@ class $SyncMetadataTable extends SyncMetadata
         DriftSqlType.bool,
         data['${effectivePrefix}household_activity_notifications_enabled'],
       )!,
+      batteryExemptionRequestedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}battery_exemption_requested_at'],
+      ),
+      lastBackgroundSyncAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_background_sync_at'],
+      ),
     );
   }
 
@@ -3029,6 +3079,18 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
   /// Whether the other member's activity is announced on this device. Defaults
   /// to on: a member who granted the permission asked to be told.
   final bool householdActivityNotificationsEnabled;
+
+  /// When Android's battery-optimization exemption was last asked for, or null
+  /// when the ask is still owed. Unlike the notification dialog this one can be
+  /// re-shown at will, so this exists to avoid nagging rather than to ration a
+  /// single chance.
+  final DateTime? batteryExemptionRequestedAt;
+
+  /// When the WorkManager isolate last finished a run, or null when it never has
+  /// on this install. Distinct from [lastSuccessfulSyncAt], which any foreground
+  /// sync also moves: this one answers "is the OS letting background delivery
+  /// happen at all", which is otherwise invisible from inside the app.
+  final DateTime? lastBackgroundSyncAt;
   const SyncMetadataRow({
     required this.singletonId,
     this.householdId,
@@ -3041,6 +3103,8 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     this.lastSuccessfulSyncAt,
     this.notificationPermissionRequestedAt,
     required this.householdActivityNotificationsEnabled,
+    this.batteryExemptionRequestedAt,
+    this.lastBackgroundSyncAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -3076,6 +3140,14 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     map['household_activity_notifications_enabled'] = Variable<bool>(
       householdActivityNotificationsEnabled,
     );
+    if (!nullToAbsent || batteryExemptionRequestedAt != null) {
+      map['battery_exemption_requested_at'] = Variable<DateTime>(
+        batteryExemptionRequestedAt,
+      );
+    }
+    if (!nullToAbsent || lastBackgroundSyncAt != null) {
+      map['last_background_sync_at'] = Variable<DateTime>(lastBackgroundSyncAt);
+    }
     return map;
   }
 
@@ -3111,6 +3183,13 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
       householdActivityNotificationsEnabled: Value(
         householdActivityNotificationsEnabled,
       ),
+      batteryExemptionRequestedAt:
+          batteryExemptionRequestedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(batteryExemptionRequestedAt),
+      lastBackgroundSyncAt: lastBackgroundSyncAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastBackgroundSyncAt),
     );
   }
 
@@ -3141,6 +3220,12 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
       householdActivityNotificationsEnabled: serializer.fromJson<bool>(
         json['householdActivityNotificationsEnabled'],
       ),
+      batteryExemptionRequestedAt: serializer.fromJson<DateTime?>(
+        json['batteryExemptionRequestedAt'],
+      ),
+      lastBackgroundSyncAt: serializer.fromJson<DateTime?>(
+        json['lastBackgroundSyncAt'],
+      ),
     );
   }
   @override
@@ -3164,6 +3249,12 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
       'householdActivityNotificationsEnabled': serializer.toJson<bool>(
         householdActivityNotificationsEnabled,
       ),
+      'batteryExemptionRequestedAt': serializer.toJson<DateTime?>(
+        batteryExemptionRequestedAt,
+      ),
+      'lastBackgroundSyncAt': serializer.toJson<DateTime?>(
+        lastBackgroundSyncAt,
+      ),
     };
   }
 
@@ -3179,6 +3270,8 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     Value<DateTime?> lastSuccessfulSyncAt = const Value.absent(),
     Value<DateTime?> notificationPermissionRequestedAt = const Value.absent(),
     bool? householdActivityNotificationsEnabled,
+    Value<DateTime?> batteryExemptionRequestedAt = const Value.absent(),
+    Value<DateTime?> lastBackgroundSyncAt = const Value.absent(),
   }) => SyncMetadataRow(
     singletonId: singletonId ?? this.singletonId,
     householdId: householdId.present ? householdId.value : this.householdId,
@@ -3201,6 +3294,12 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     householdActivityNotificationsEnabled:
         householdActivityNotificationsEnabled ??
         this.householdActivityNotificationsEnabled,
+    batteryExemptionRequestedAt: batteryExemptionRequestedAt.present
+        ? batteryExemptionRequestedAt.value
+        : this.batteryExemptionRequestedAt,
+    lastBackgroundSyncAt: lastBackgroundSyncAt.present
+        ? lastBackgroundSyncAt.value
+        : this.lastBackgroundSyncAt,
   );
   SyncMetadataRow copyWithCompanion(SyncMetadataCompanion data) {
     return SyncMetadataRow(
@@ -3233,6 +3332,12 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
           data.householdActivityNotificationsEnabled.present
           ? data.householdActivityNotificationsEnabled.value
           : this.householdActivityNotificationsEnabled,
+      batteryExemptionRequestedAt: data.batteryExemptionRequestedAt.present
+          ? data.batteryExemptionRequestedAt.value
+          : this.batteryExemptionRequestedAt,
+      lastBackgroundSyncAt: data.lastBackgroundSyncAt.present
+          ? data.lastBackgroundSyncAt.value
+          : this.lastBackgroundSyncAt,
     );
   }
 
@@ -3252,8 +3357,10 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
             'notificationPermissionRequestedAt: $notificationPermissionRequestedAt, ',
           )
           ..write(
-            'householdActivityNotificationsEnabled: $householdActivityNotificationsEnabled',
+            'householdActivityNotificationsEnabled: $householdActivityNotificationsEnabled, ',
           )
+          ..write('batteryExemptionRequestedAt: $batteryExemptionRequestedAt, ')
+          ..write('lastBackgroundSyncAt: $lastBackgroundSyncAt')
           ..write(')'))
         .toString();
   }
@@ -3271,6 +3378,8 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     lastSuccessfulSyncAt,
     notificationPermissionRequestedAt,
     householdActivityNotificationsEnabled,
+    batteryExemptionRequestedAt,
+    lastBackgroundSyncAt,
   );
   @override
   bool operator ==(Object other) =>
@@ -3288,7 +3397,10 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
           other.notificationPermissionRequestedAt ==
               this.notificationPermissionRequestedAt &&
           other.householdActivityNotificationsEnabled ==
-              this.householdActivityNotificationsEnabled);
+              this.householdActivityNotificationsEnabled &&
+          other.batteryExemptionRequestedAt ==
+              this.batteryExemptionRequestedAt &&
+          other.lastBackgroundSyncAt == this.lastBackgroundSyncAt);
 }
 
 class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
@@ -3303,6 +3415,8 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
   final Value<DateTime?> lastSuccessfulSyncAt;
   final Value<DateTime?> notificationPermissionRequestedAt;
   final Value<bool> householdActivityNotificationsEnabled;
+  final Value<DateTime?> batteryExemptionRequestedAt;
+  final Value<DateTime?> lastBackgroundSyncAt;
   const SyncMetadataCompanion({
     this.singletonId = const Value.absent(),
     this.householdId = const Value.absent(),
@@ -3315,6 +3429,8 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     this.lastSuccessfulSyncAt = const Value.absent(),
     this.notificationPermissionRequestedAt = const Value.absent(),
     this.householdActivityNotificationsEnabled = const Value.absent(),
+    this.batteryExemptionRequestedAt = const Value.absent(),
+    this.lastBackgroundSyncAt = const Value.absent(),
   });
   SyncMetadataCompanion.insert({
     this.singletonId = const Value.absent(),
@@ -3328,6 +3444,8 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     this.lastSuccessfulSyncAt = const Value.absent(),
     this.notificationPermissionRequestedAt = const Value.absent(),
     this.householdActivityNotificationsEnabled = const Value.absent(),
+    this.batteryExemptionRequestedAt = const Value.absent(),
+    this.lastBackgroundSyncAt = const Value.absent(),
   }) : updatedAt = Value(updatedAt);
   static Insertable<SyncMetadataRow> custom({
     Expression<int>? singletonId,
@@ -3341,6 +3459,8 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     Expression<DateTime>? lastSuccessfulSyncAt,
     Expression<DateTime>? notificationPermissionRequestedAt,
     Expression<bool>? householdActivityNotificationsEnabled,
+    Expression<DateTime>? batteryExemptionRequestedAt,
+    Expression<DateTime>? lastBackgroundSyncAt,
   }) {
     return RawValuesInsertable({
       if (singletonId != null) 'singleton_id': singletonId,
@@ -3360,6 +3480,10 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
       if (householdActivityNotificationsEnabled != null)
         'household_activity_notifications_enabled':
             householdActivityNotificationsEnabled,
+      if (batteryExemptionRequestedAt != null)
+        'battery_exemption_requested_at': batteryExemptionRequestedAt,
+      if (lastBackgroundSyncAt != null)
+        'last_background_sync_at': lastBackgroundSyncAt,
     });
   }
 
@@ -3375,6 +3499,8 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     Value<DateTime?>? lastSuccessfulSyncAt,
     Value<DateTime?>? notificationPermissionRequestedAt,
     Value<bool>? householdActivityNotificationsEnabled,
+    Value<DateTime?>? batteryExemptionRequestedAt,
+    Value<DateTime?>? lastBackgroundSyncAt,
   }) {
     return SyncMetadataCompanion(
       singletonId: singletonId ?? this.singletonId,
@@ -3392,6 +3518,9 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
       householdActivityNotificationsEnabled:
           householdActivityNotificationsEnabled ??
           this.householdActivityNotificationsEnabled,
+      batteryExemptionRequestedAt:
+          batteryExemptionRequestedAt ?? this.batteryExemptionRequestedAt,
+      lastBackgroundSyncAt: lastBackgroundSyncAt ?? this.lastBackgroundSyncAt,
     );
   }
 
@@ -3437,6 +3566,16 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
         householdActivityNotificationsEnabled.value,
       );
     }
+    if (batteryExemptionRequestedAt.present) {
+      map['battery_exemption_requested_at'] = Variable<DateTime>(
+        batteryExemptionRequestedAt.value,
+      );
+    }
+    if (lastBackgroundSyncAt.present) {
+      map['last_background_sync_at'] = Variable<DateTime>(
+        lastBackgroundSyncAt.value,
+      );
+    }
     return map;
   }
 
@@ -3456,8 +3595,10 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
             'notificationPermissionRequestedAt: $notificationPermissionRequestedAt, ',
           )
           ..write(
-            'householdActivityNotificationsEnabled: $householdActivityNotificationsEnabled',
+            'householdActivityNotificationsEnabled: $householdActivityNotificationsEnabled, ',
           )
+          ..write('batteryExemptionRequestedAt: $batteryExemptionRequestedAt, ')
+          ..write('lastBackgroundSyncAt: $lastBackgroundSyncAt')
           ..write(')'))
         .toString();
   }
@@ -4787,6 +4928,8 @@ typedef $$SyncMetadataTableCreateCompanionBuilder =
       Value<DateTime?> lastSuccessfulSyncAt,
       Value<DateTime?> notificationPermissionRequestedAt,
       Value<bool> householdActivityNotificationsEnabled,
+      Value<DateTime?> batteryExemptionRequestedAt,
+      Value<DateTime?> lastBackgroundSyncAt,
     });
 typedef $$SyncMetadataTableUpdateCompanionBuilder =
     SyncMetadataCompanion Function({
@@ -4801,6 +4944,8 @@ typedef $$SyncMetadataTableUpdateCompanionBuilder =
       Value<DateTime?> lastSuccessfulSyncAt,
       Value<DateTime?> notificationPermissionRequestedAt,
       Value<bool> householdActivityNotificationsEnabled,
+      Value<DateTime?> batteryExemptionRequestedAt,
+      Value<DateTime?> lastBackgroundSyncAt,
     });
 
 class $$SyncMetadataTableFilterComposer
@@ -4868,6 +5013,16 @@ class $$SyncMetadataTableFilterComposer
         column: $table.householdActivityNotificationsEnabled,
         builder: (column) => ColumnFilters(column),
       );
+
+  ColumnFilters<DateTime> get batteryExemptionRequestedAt => $composableBuilder(
+    column: $table.batteryExemptionRequestedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastBackgroundSyncAt => $composableBuilder(
+    column: $table.lastBackgroundSyncAt,
+    builder: (column) => ColumnFilters(column),
+  );
 }
 
 class $$SyncMetadataTableOrderingComposer
@@ -4935,6 +5090,17 @@ class $$SyncMetadataTableOrderingComposer
         column: $table.householdActivityNotificationsEnabled,
         builder: (column) => ColumnOrderings(column),
       );
+
+  ColumnOrderings<DateTime> get batteryExemptionRequestedAt =>
+      $composableBuilder(
+        column: $table.batteryExemptionRequestedAt,
+        builder: (column) => ColumnOrderings(column),
+      );
+
+  ColumnOrderings<DateTime> get lastBackgroundSyncAt => $composableBuilder(
+    column: $table.lastBackgroundSyncAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$SyncMetadataTableAnnotationComposer
@@ -4996,6 +5162,17 @@ class $$SyncMetadataTableAnnotationComposer
         column: $table.householdActivityNotificationsEnabled,
         builder: (column) => column,
       );
+
+  GeneratedColumn<DateTime> get batteryExemptionRequestedAt =>
+      $composableBuilder(
+        column: $table.batteryExemptionRequestedAt,
+        builder: (column) => column,
+      );
+
+  GeneratedColumn<DateTime> get lastBackgroundSyncAt => $composableBuilder(
+    column: $table.lastBackgroundSyncAt,
+    builder: (column) => column,
+  );
 }
 
 class $$SyncMetadataTableTableManager
@@ -5042,6 +5219,9 @@ class $$SyncMetadataTableTableManager
                     const Value.absent(),
                 Value<bool> householdActivityNotificationsEnabled =
                     const Value.absent(),
+                Value<DateTime?> batteryExemptionRequestedAt =
+                    const Value.absent(),
+                Value<DateTime?> lastBackgroundSyncAt = const Value.absent(),
               }) => SyncMetadataCompanion(
                 singletonId: singletonId,
                 householdId: householdId,
@@ -5056,6 +5236,8 @@ class $$SyncMetadataTableTableManager
                     notificationPermissionRequestedAt,
                 householdActivityNotificationsEnabled:
                     householdActivityNotificationsEnabled,
+                batteryExemptionRequestedAt: batteryExemptionRequestedAt,
+                lastBackgroundSyncAt: lastBackgroundSyncAt,
               ),
           createCompanionCallback:
               ({
@@ -5072,6 +5254,9 @@ class $$SyncMetadataTableTableManager
                     const Value.absent(),
                 Value<bool> householdActivityNotificationsEnabled =
                     const Value.absent(),
+                Value<DateTime?> batteryExemptionRequestedAt =
+                    const Value.absent(),
+                Value<DateTime?> lastBackgroundSyncAt = const Value.absent(),
               }) => SyncMetadataCompanion.insert(
                 singletonId: singletonId,
                 householdId: householdId,
@@ -5086,6 +5271,8 @@ class $$SyncMetadataTableTableManager
                     notificationPermissionRequestedAt,
                 householdActivityNotificationsEnabled:
                     householdActivityNotificationsEnabled,
+                batteryExemptionRequestedAt: batteryExemptionRequestedAt,
+                lastBackgroundSyncAt: lastBackgroundSyncAt,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

@@ -103,6 +103,18 @@ class SyncMetadata extends Table {
   BoolColumn get householdActivityNotificationsEnabled =>
       boolean().withDefault(const Constant<bool>(true))();
 
+  /// When Android's battery-optimization exemption was last asked for, or null
+  /// when the ask is still owed. Unlike the notification dialog this one can be
+  /// re-shown at will, so this exists to avoid nagging rather than to ration a
+  /// single chance.
+  DateTimeColumn get batteryExemptionRequestedAt => dateTime().nullable()();
+
+  /// When the WorkManager isolate last finished a run, or null when it never has
+  /// on this install. Distinct from [lastSuccessfulSyncAt], which any foreground
+  /// sync also moves: this one answers "is the OS letting background delivery
+  /// happen at all", which is otherwise invisible from inside the app.
+  DateTimeColumn get lastBackgroundSyncAt => dateTime().nullable()();
+
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{singletonId};
 }
@@ -128,7 +140,7 @@ final class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -174,8 +186,22 @@ final class AppDatabase extends _$AppDatabase {
           syncMetadata.householdActivityNotificationsEnabled,
         );
       }
+      if (from < 5 && to >= 5) {
+        // Background-delivery health. Both start null on an upgrading device,
+        // and null is the honest answer in each case: the exemption has not been
+        // asked for on this install, and no background run has been observed
+        // yet. Neither is inferable from the columns that already exist.
+        await migrator.addColumn(
+          syncMetadata,
+          syncMetadata.batteryExemptionRequestedAt,
+        );
+        await migrator.addColumn(
+          syncMetadata,
+          syncMetadata.lastBackgroundSyncAt,
+        );
+      }
       // Every future schema version must add an explicit, tested migration.
-      if (to > 4) {
+      if (to > 5) {
         throw StateError('Missing database migration from $from to $to.');
       }
     },
@@ -310,6 +336,22 @@ final class AppDatabase extends _$AppDatabase {
     return (select(
       syncMetadata,
     )..where((row) => row.singletonId.equals(1))).watchSingle();
+  }
+
+  /// Records that the background isolate reached the end of a run.
+  ///
+  /// Written for every outcome, including an offline one. The question this
+  /// answers is whether Android let the worker run at all, and a run that found
+  /// no network answers that just as well as one that synced. Deliberately does
+  /// not touch `updatedAt`, which tracks changes to the member's own settings.
+  Future<void> recordBackgroundSync(DateTime at) async {
+    // Ensures the singleton exists before updating it.
+    await readSyncMetadata();
+    await (update(
+      syncMetadata,
+    )..where((row) => row.singletonId.equals(1))).write(
+      SyncMetadataCompanion(lastBackgroundSyncAt: Value<DateTime>(at)),
+    );
   }
 
   Stream<int> watchUnresolvedMutationCount() {
