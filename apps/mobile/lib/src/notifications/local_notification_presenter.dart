@@ -110,15 +110,17 @@ final class LocalNotificationPresenter
   }
 
   @override
-  Future<bool> requestPermission() async {
+  Future<bool?> requestPermission() async {
     try {
       // Initialize first so the channel exists the moment permission is
       // granted; a member who allows notifications and then opens Android's
       // notification settings should find the channel already listed.
       await _ensureReady();
-      return await _android?.requestNotificationsPermission() ?? false;
+      return await _android?.requestNotificationsPermission();
     } on Object {
-      return false;
+      // No answer, rather than a denial: initialization is what fails here, and
+      // it fails before Android is ever asked.
+      return null;
     }
   }
 
