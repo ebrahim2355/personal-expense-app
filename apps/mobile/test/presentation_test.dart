@@ -31,9 +31,10 @@ import 'package:houseexpenses/src/presentation/presentation_providers.dart';
 import 'package:houseexpenses/src/presentation/settings_screen.dart';
 import 'package:houseexpenses/src/providers.dart';
 
-// Only the notification permission fake is borrowed: this file defines its own
+// Only the notification fakes are borrowed: this file defines its own
 // repository fakes, and a blanket import would collide with the sync helpers.
-import 'support/fakes.dart' show FakeNotificationPermissions;
+import 'support/fakes.dart'
+    show FakeBackgroundWorkPolicy, FakeNotificationPermissions;
 
 /// The period the dashboard is scoped to in these tests, and an older settled one
 /// that must stay out of the dashboard while remaining browsable in History.
@@ -765,10 +766,14 @@ void main() {
 
     late AppDatabase database;
     late FakeNotificationPermissions permissions;
+    late FakeBackgroundWorkPolicy policy;
 
     setUp(() {
       database = AppDatabase(NativeDatabase.memory());
       permissions = FakeNotificationPermissions();
+      // Exempt by default so the cases that are about the switch or the
+      // permission are not also rendering the throttling advisory.
+      policy = FakeBackgroundWorkPolicy(exempt: true);
       addTearDown(database.close);
     });
 
@@ -784,6 +789,7 @@ void main() {
             notifications: NotificationSettingsController(
               database: database,
               permissions: permissions,
+              policy: policy,
             ),
           ),
         ),
@@ -872,6 +878,72 @@ void main() {
       // A blocked permission never touched the household preference, so the
       // switch is still where the member left it.
       expect(_activitySwitch(tester).value, isTrue);
+
+      await disposeTree(tester);
+    });
+
+    testWidgets('offers a shortcut into Android settings when blocked', (
+      tester,
+    ) async {
+      permissions.enabled = false;
+      await pumpSettings(tester);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('open-app-settings-button')));
+      await tester.pumpAndSettle();
+
+      expect(policy.openSettingsCalls, 1);
+
+      await disposeTree(tester);
+    });
+
+    testWidgets('says when background sync last ran, and when it never has', (
+      tester,
+    ) async {
+      await pumpSettings(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Has not run yet on this device.'), findsOneWidget);
+
+      await database.recordBackgroundSync(DateTime.utc(2026, 8, 18, 16, 14, 9));
+      await tester.pumpAndSettle();
+
+      // Rendered in Dhaka time, like every other instant in the app.
+      expect(find.text('Last ran August 18, 2026 · 10:14 PM.'), findsOneWidget);
+
+      await disposeTree(tester);
+    });
+
+    testWidgets('warns when Android is throttling background work', (
+      tester,
+    ) async {
+      policy.exempt = false;
+      await pumpSettings(tester);
+
+      // The first frame has no answer yet. Flashing the advisory there would
+      // accuse Android of throttling before it has been asked.
+      expect(find.text('Android is limiting background sync'), findsNothing);
+
+      await tester.pumpAndSettle();
+      expect(find.text('Android is limiting background sync'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const Key('request-battery-exemption-button')),
+      );
+      await tester.pumpAndSettle();
+
+      // Only a dialog was launched. Android does not report what the member
+      // chose, so the advisory stays until it is re-checked.
+      expect(policy.requestCalls, 1);
+      expect(find.text('Android is limiting background sync'), findsOneWidget);
+
+      policy.exempt = true;
+      await tester.tap(
+        find.byKey(const Key('recheck-battery-exemption-button')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Android is limiting background sync'), findsNothing);
 
       await disposeTree(tester);
     });
@@ -970,6 +1042,10 @@ List<Override> _dataOverrides(
       systemNotificationsEnabledProvider.overrideWith((ref) async => true),
       householdActivityNotificationsEnabledProvider.overrideWith(
         (ref) => Stream<bool>.value(true),
+      ),
+      batteryExemptionGrantedProvider.overrideWith((ref) async => true),
+      lastBackgroundSyncProvider.overrideWith(
+        (ref) => Stream<DateTime?>.value(null),
       ),
     ] else
       notificationSettingsControllerProvider.overrideWithValue(notifications),
