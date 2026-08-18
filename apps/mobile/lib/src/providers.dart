@@ -5,6 +5,7 @@ import 'application/session_controller.dart';
 import 'application/sync_coordinator.dart';
 import 'application/sync_triggers.dart';
 import 'background/background_sync.dart';
+import 'background/background_work_policy.dart';
 import 'config/app_config.dart';
 import 'data/local/app_database.dart';
 import 'data/remote/api_client.dart';
@@ -108,8 +109,13 @@ final notificationSettingsControllerProvider =
       return NotificationSettingsController(
         database: ref.watch(appDatabaseProvider),
         permissions: ref.watch(notificationPermissionsProvider),
+        policy: ref.watch(backgroundWorkPolicyProvider),
       );
     });
+
+final backgroundWorkPolicyProvider = Provider<BackgroundWorkPolicy>((ref) {
+  return const AndroidBackgroundWorkPolicy();
+});
 
 final syncCoordinatorProvider = Provider<SyncCoordinator>((ref) {
   final coordinator = SyncCoordinator(
@@ -156,6 +162,11 @@ final appStartupProvider = FutureProvider<void>((ref) async {
   await ref
       .watch(notificationSettingsControllerProvider)
       .ensureNotificationPermission();
+  // Immediately after, and in this order deliberately: allow notifications
+  // first, then keep them timely. Also never throws.
+  await ref
+      .watch(notificationSettingsControllerProvider)
+      .ensureBackgroundExemption();
   await ref.watch(syncTriggerControllerProvider).start();
 });
 
@@ -175,6 +186,25 @@ final householdActivityNotificationsEnabledProvider = StreamProvider<bool>((
   return ref
       .watch(notificationSettingsControllerProvider)
       .watchHouseholdActivityEnabled();
+});
+
+/// Whether Android is willing to run this app's background work on time. A
+/// `FutureProvider` for the same reason as [systemNotificationsEnabledProvider]:
+/// the platform announces no change, so Settings invalidates this after showing
+/// the dialog.
+final batteryExemptionGrantedProvider = FutureProvider<bool>((ref) {
+  return ref
+      .watch(notificationSettingsControllerProvider)
+      .read()
+      .then((settings) => settings.batteryExemptionGranted);
+});
+
+/// When the WorkManager isolate last finished a run. Null means never on this
+/// install, which is the answer to "is closed-app delivery working at all".
+final lastBackgroundSyncProvider = StreamProvider<DateTime?>((ref) {
+  return ref
+      .watch(notificationSettingsControllerProvider)
+      .watchLastBackgroundSync();
 });
 
 final visibleExpensesProvider = StreamProvider<List<Expense>>((ref) {
