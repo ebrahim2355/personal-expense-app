@@ -6,6 +6,7 @@ import 'package:houseexpenses/src/data/local/app_database.dart';
 import 'generated/schema.dart';
 import 'generated/schema_v2.dart' as v2;
 import 'generated/schema_v3.dart' as v3;
+import 'generated/schema_v4.dart' as v4;
 
 /// Drift generates the historical schemas as bare `TableInfo`s with no data
 /// classes, so fixtures are inserted column by column.
@@ -137,4 +138,55 @@ void main() {
     expect(metadata.householdActivityNotificationsEnabled, isTrue);
     expect(metadata.notificationPermissionRequestedAt, isNull);
   });
+
+  test('migrates from v4 to v5', () async {
+    final connection = await verifier.startAt(4);
+    final database = AppDatabase(connection);
+    addTearDown(database.close);
+
+    await verifier.migrateAndValidate(database, 5);
+  });
+
+  test(
+    'leaves an upgraded device owed the exemption ask and unproven',
+    () async {
+      final schema = await verifier.schemaAt(4);
+      final oldDatabase = v4.DatabaseAtV4(schema.newConnection());
+      final recordedAt = DateTime.utc(2026, 8, 18, 16);
+      await oldDatabase
+          .into(oldDatabase.syncMetadata)
+          .insert(
+            rawRow(<String, Expression<Object>>{
+              'singleton_id': const Variable<int>(1),
+              'member_key': const Variable<String>('EBRAHIM'),
+              'last_cursor': const Variable<String>('cursor-11'),
+              'updated_at': Variable<DateTime>(recordedAt),
+              'notification_permission_requested_at': Variable<DateTime>(
+                recordedAt,
+              ),
+              'household_activity_notifications_enabled': const Variable<bool>(
+                false,
+              ),
+            }),
+          );
+      await oldDatabase.close();
+
+      final database = AppDatabase(schema.newConnection());
+      addTearDown(database.close);
+      await verifier.migrateAndValidate(database, 5);
+
+      final metadata = await database.readSyncMetadata();
+      // Everything the device had chosen survives, including a switch it had
+      // deliberately turned off.
+      expect(metadata.memberKey, 'EBRAHIM');
+      expect(metadata.lastCursor, 'cursor-11');
+      expect(metadata.householdActivityNotificationsEnabled, isFalse);
+      expect(metadata.notificationPermissionRequestedAt?.toUtc(), recordedAt);
+      // Null is the honest answer to both new questions: this install has never
+      // been asked about battery optimization, and no background run has been
+      // observed. Neither is inferable from the columns that already existed.
+      expect(metadata.batteryExemptionRequestedAt, isNull);
+      expect(metadata.lastBackgroundSyncAt, isNull);
+    },
+  );
 }
