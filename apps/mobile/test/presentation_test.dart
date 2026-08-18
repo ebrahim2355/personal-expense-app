@@ -1,9 +1,13 @@
 import 'dart:async';
 
+import 'package:drift/drift.dart' show driftRuntimeOptions;
+import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:houseexpenses/src/application/notification_settings.dart';
 import 'package:houseexpenses/src/application/sync_coordinator.dart';
+import 'package:houseexpenses/src/data/local/app_database.dart';
 import 'package:houseexpenses/src/data/remote/api_client.dart';
 import 'package:houseexpenses/src/data/remote/api_models.dart';
 import 'package:houseexpenses/src/data/remote/http_transport.dart';
@@ -24,7 +28,12 @@ import 'package:houseexpenses/src/presentation/lending_screen.dart';
 import 'package:houseexpenses/src/presentation/loan_form_screen.dart';
 import 'package:houseexpenses/src/presentation/login_screen.dart';
 import 'package:houseexpenses/src/presentation/presentation_providers.dart';
+import 'package:houseexpenses/src/presentation/settings_screen.dart';
 import 'package:houseexpenses/src/providers.dart';
+
+// Only the notification permission fake is borrowed: this file defines its own
+// repository fakes, and a blanket import would collide with the sync helpers.
+import 'support/fakes.dart' show FakeNotificationPermissions;
 
 /// The period the dashboard is scoped to in these tests, and an older settled one
 /// that must stay out of the dashboard while remaining browsable in History.
@@ -748,6 +757,125 @@ void main() {
       expect(tester.widget<AppBar>(find.byType(AppBar)).actions, isNull);
     });
   });
+
+  group('settings notifications', () {
+    // Each test opens its own in-memory database, so Drift's shared-executor
+    // warning — and the page of stack trace it prints — is a false positive here.
+    driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
+
+    late AppDatabase database;
+    late FakeNotificationPermissions permissions;
+
+    setUp(() {
+      database = AppDatabase(NativeDatabase.memory());
+      permissions = FakeNotificationPermissions();
+      addTearDown(database.close);
+    });
+
+    /// Builds the real notification providers over an in-memory database, so a
+    /// tap goes through the controller and Drift rather than a stub.
+    Future<void> pumpSettings(WidgetTester tester) async {
+      _useTallScreen(tester);
+      await tester.pumpWidget(
+        _testApp(
+          const SettingsScreen(member: testIdentity),
+          _dataOverrides(
+            FakeExpenseRepository(),
+            notifications: NotificationSettingsController(
+              database: database,
+              permissions: permissions,
+            ),
+          ),
+        ),
+      );
+    }
+
+    /// Takes the tree down while the test can still pump.
+    ///
+    /// Disposing the provider scope cancels the Drift stream behind the switch,
+    /// and Drift schedules that cancellation on a zero-duration timer. Left to
+    /// the framework's own teardown the timer never fires, which both fails the
+    /// test and leaves `database.close()` waiting forever. The pump has to name
+    /// a duration: a bare `pump()` only flushes microtasks and draws a frame,
+    /// without moving the fake clock the timer is waiting on.
+    Future<void> disposeTree(WidgetTester tester) async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 1));
+    }
+
+    testWidgets(
+      'turning the switch off is recorded and reflected in the copy',
+      (tester) async {
+        await pumpSettings(tester);
+        await tester.pumpAndSettle();
+
+        // Announcements are on by default, and Android is allowing them, so the
+        // card carries nothing but the switch.
+        expect(_activitySwitch(tester).value, isTrue);
+        expect(find.text('Android is blocking notifications'), findsNothing);
+
+        await tester.tap(find.byKey(const Key('household-activity-switch')));
+        await tester.pumpAndSettle();
+
+        expect(_activitySwitch(tester).value, isFalse);
+        expect(
+          (await database.readSyncMetadata())
+              .householdActivityNotificationsEnabled,
+          isFalse,
+        );
+        // Turning announcements off must not read as turning sync off.
+        expect(
+          find.text('Nothing is announced. Sync keeps running as usual.'),
+          findsOneWidget,
+        );
+
+        await disposeTree(tester);
+      },
+    );
+
+    testWidgets('cannot be toggled before the stored preference arrives', (
+      tester,
+    ) async {
+      await pumpSettings(tester);
+
+      // The first frame renders while the preference is still being read, so a
+      // tap then would write the optimistic "on" back over whatever is stored.
+      expect(_activitySwitch(tester).onChanged, isNull);
+
+      await tester.pumpAndSettle();
+      expect(_activitySwitch(tester).onChanged, isNotNull);
+
+      await disposeTree(tester);
+    });
+
+    testWidgets('spells out how to undo a denial, and re-checks on demand', (
+      tester,
+    ) async {
+      permissions.enabled = false;
+      await pumpSettings(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Android is blocking notifications'), findsOneWidget);
+      final recheck = find.byKey(
+        const Key('recheck-notification-permission-button'),
+      );
+      expect(recheck, findsOneWidget);
+
+      // What a member does after following the instructions: allow the
+      // permission in Android Settings, come back, and re-check.
+      permissions.enabled = true;
+      await tester.tap(recheck);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Android is blocking notifications'), findsNothing);
+      expect(recheck, findsNothing);
+      // A blocked permission never touched the household preference, so the
+      // switch is still where the member left it.
+      expect(_activitySwitch(tester).value, isTrue);
+
+      await disposeTree(tester);
+    });
+  });
 }
 
 Widget _testApp(Widget child, [List<Override> overrides = const <Override>[]]) {
@@ -774,12 +902,18 @@ String? _appBarTitle(WidgetTester tester) => tester
     )
     .data;
 
+/// The household activity switch, read as a widget so a test can assert on both
+/// its value and whether it currently accepts a tap.
+SwitchListTile _activitySwitch(WidgetTester tester) => tester
+    .widget<SwitchListTile>(find.byKey(const Key('household-activity-switch')));
+
 List<Override> _dataOverrides(
   FakeExpenseRepository repository, {
   FakePeriodRepository? periods,
   FakeLoanRepository? loans,
   HistoryFilter? historyFilter,
   SyncOutcome syncOutcome = SyncOutcome.completed,
+  NotificationSettingsController? notifications,
 }) {
   final periodRepository =
       periods ??
@@ -828,6 +962,17 @@ List<Override> _dataOverrides(
       ),
     ),
     apiEnvironmentLabelProvider.overrideWithValue('Test · example.test'),
+    // The notification card on that tab otherwise reads the device database and
+    // asks Android about the permission, so both answers are stubbed. A test
+    // that is about notifications injects a controller instead and lets the real
+    // providers derive from it.
+    if (notifications == null) ...<Override>[
+      systemNotificationsEnabledProvider.overrideWith((ref) async => true),
+      householdActivityNotificationsEnabledProvider.overrideWith(
+        (ref) => Stream<bool>.value(true),
+      ),
+    ] else
+      notificationSettingsControllerProvider.overrideWithValue(notifications),
   ];
 }
 
