@@ -121,21 +121,33 @@ final class RecordingActivityNotifier implements HouseholdActivityNotifier {
 }
 
 final class FakeNotificationPermissions implements NotificationPermissions {
-  FakeNotificationPermissions({this.enabled = true, this.grants = true});
+  FakeNotificationPermissions({
+    this.enabled = true,
+    this.grants = true,
+    this.canAsk = true,
+  });
 
   /// What Android currently answers about this app's notifications.
   bool enabled;
 
   /// What the permission dialog would return. A denial leaves [enabled] false.
   bool grants;
+
+  /// Whether an ask reaches Android at all. False models the request failing
+  /// before the dialog — the shape a missing status icon takes — which must not
+  /// be recorded as the member's answer.
+  bool canAsk;
   int requestCalls = 0;
 
   @override
   Future<bool> areNotificationsEnabled() async => enabled;
 
   @override
-  Future<bool> requestPermission() async {
+  Future<bool?> requestPermission() async {
     requestCalls += 1;
+    if (!canAsk) {
+      return null;
+    }
     enabled = grants;
     return grants;
   }
