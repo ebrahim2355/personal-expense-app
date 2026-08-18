@@ -272,8 +272,12 @@ background sync is best effort, not immediate. See
 [apps/mobile/README.md](apps/mobile/README.md) for the screen and verification
 details.
 
-The app asks for the Android notification permission once, on the first open after
-installation, and works normally if it is denied. Announcements arrive with
+The app asks for the Android notification permission on the first open after
+installation, and again on a later open while notifications are still off — an ask
+that fails before Android sees it must not count as a denial. Android shows its
+dialog only once per install and answers silently afterwards, so a member who
+declined is never prompted twice. Denial is never fatal: the app works normally
+without notifications. Announcements arrive with
 background sync, which runs every fifteen minutes at best: that is WorkManager's
 floor, not a promise, and Doze can stretch a real interval to hours on an idle
 phone. Opening the app or pulling to refresh syncs immediately. A device is never
