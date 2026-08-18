@@ -1,0 +1,22 @@
+<!-- Status-bar icon for household-activity notifications.
+
+     Android draws a notification small icon from its alpha channel alone and
+     tints the result, so this must be a flat white-on-transparent silhouette.
+     Pointing the plugin at @mipmap/ic_launcher instead would render as a solid
+     white blob on Android 5+.
+
+     A receipt: one outer subpath with a torn bottom edge, and three inner
+     subpaths that evenOdd carves back out as the printed lines. evenOdd rather
+     than winding order so the holes do not depend on the direction each
+     rectangle happens to be drawn in; supported from API 24, which is this
+     app's minSdk. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M4,2 L20,2 L20,22 L17.33,20 L14.67,22 L12,20 L9.33,22 L6.67,20 L4,22 Z M7,5.5 L17,5.5 L17,8 L7,8 Z M7,10.25 L17,10.25 L17,12.75 L7,12.75 Z M7,15 L13,15 L13,17.5 L7,17.5 Z" />
+</vector>
