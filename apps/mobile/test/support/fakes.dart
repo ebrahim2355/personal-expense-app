@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:drift/drift.dart';
+import 'package:flutter/services.dart';
+import 'package:houseexpenses/src/background/background_work_policy.dart';
 import 'package:houseexpenses/src/data/local/app_database.dart';
 import 'package:houseexpenses/src/data/remote/api_client.dart';
 import 'package:houseexpenses/src/data/remote/api_models.dart';
@@ -150,6 +152,57 @@ final class FakeNotificationPermissions implements NotificationPermissions {
     }
     enabled = grants;
     return grants;
+  }
+}
+
+/// Stands in for Android's power-management stance, with the same mutable-knob
+/// shape as [FakeNotificationPermissions].
+final class FakeBackgroundWorkPolicy implements BackgroundWorkPolicy {
+  FakeBackgroundWorkPolicy({
+    this.exempt = false,
+    this.canLaunchDialog = true,
+    this.unavailable = false,
+  });
+
+  /// What Android currently answers about the power-save whitelist.
+  bool exempt;
+
+  /// Whether the exemption dialog actually launches. False models the OEM build
+  /// that has removed the activity, which must not be recorded as an ask.
+  bool canLaunchDialog;
+
+  /// Throws from every method, standing in for a platform channel with no
+  /// handler on the other end — the shape a call from the background isolate
+  /// takes. The controller must survive it.
+  bool unavailable;
+
+  int requestCalls = 0;
+  int openSettingsCalls = 0;
+
+  @override
+  Future<bool> isExemptFromBatteryOptimization() async {
+    _guard();
+    return exempt;
+  }
+
+  @override
+  Future<bool> requestBatteryExemption() async {
+    _guard();
+    requestCalls += 1;
+    return canLaunchDialog;
+  }
+
+  @override
+  Future<bool> openAppSettings() async {
+    _guard();
+    openSettingsCalls += 1;
+    return canLaunchDialog;
+  }
+
+  void _guard() {
+    if (unavailable) {
+      throw MissingPluginException('No handler for the policy channel.');
+    }
   }
 }
 
