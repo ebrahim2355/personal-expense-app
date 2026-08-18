@@ -22,7 +22,7 @@ on raw Dio or Drift implementation types.
 - History: newest-first local rows with a local text search plus date, payer, and
   category filters, edit, and confirmed soft deletion.
 - Settings: signed-in member, API environment, app version, manual sync, logout,
-  and a concise local-data/background-sync explanation.
+  a notifications card, and a concise local-data/background-sync explanation.
 
 Bottom navigation is Dashboard, Lending, History, and Settings.
 
@@ -117,7 +117,32 @@ flutter clean
 - Launch, resume, mutation, manual refresh, live connectivity recovery, and
   network-constrained WorkManager jobs trigger attempts. Connectivity is never
   treated as proof that the API is reachable.
+- A sync that brings in the other member's expense, loan, or spending-period
+  change posts one Android notification per change, plus a summary when a single
+  sync brings several. The author is taken from the change feed, so a device is
+  never notified about its own entry, and bootstrap never notifies at all.
+
+## Notifications
+
+`POST_NOTIFICATIONS` is requested once, on the first open after installation, and
+the attempt is recorded locally so it is never repeated. A denial is never fatal:
+sync, offline use, and every screen behave exactly as before.
+
+Announcements ride on background sync, which runs every fifteen minutes at best.
+Fifteen minutes is WorkManager's floor rather than a guarantee — see the caveat
+below — so a notification can be late by much more than that. Opening the app or
+pulling to refresh syncs and announces immediately. Near-instant delivery would
+need FCM, which is deliberately out of scope for now.
+
+The Settings notifications card carries a household-activity switch and, whenever
+Android reports that notifications are blocked, a warning with instructions for
+re-enabling them in Android Settings plus a **Re-check** button. There is no
+in-app "ask again": Android does not re-show its dialog after a denial, so a
+button claiming to would be a lie. Turning the switch off silences announcements
+only; sync keeps running.
 
 Android schedules background work on a best-effort basis. It cannot guarantee
 an immediate run or an exact interval, so foreground and manual triggers remain
-authoritative for freshness.
+authoritative for freshness, and notification timing inherits the same limit —
+Doze and App Standby can stretch a fifteen-minute period to hours on an idle
+phone.
