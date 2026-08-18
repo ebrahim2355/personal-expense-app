@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../application/sync_coordinator.dart';
+import '../domain/dhaka_time.dart';
 import '../domain/session.dart';
 import '../providers.dart';
 import 'common_widgets.dart';
@@ -102,11 +103,22 @@ final class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   style: TextStyle(fontWeight: FontWeight.w700),
                 ),
                 SizedBox(height: 6),
+                // Says out loud what the notification card only implies: even a
+                // fully permitted app is polling, so "sooner" is the most this
+                // can promise. Better here than a surprise later.
                 Text(
-                  'Android decides when background work can run and does not '
-                  'guarantee an immediate sync. Open the app or tap refresh '
-                  'to request one now. Notifications about the other member '
-                  'arrive with that sync, so they inherit the same delay.',
+                  'Sync runs about every fifteen minutes in the background, '
+                  'and Android decides when — it does not guarantee an '
+                  'immediate run. Open the app or tap refresh to request one '
+                  'now. Notifications about the other member arrive with that '
+                  'sync, so they inherit the same delay.',
+                ),
+                SizedBox(height: 6),
+                Text(
+                  'Allowing background activity under Notifications above '
+                  'makes those runs far more punctual, and leaving the app in '
+                  'Recents keeps them happening at all. Neither makes delivery '
+                  'instant.',
                 ),
               ],
             ),
@@ -166,9 +178,12 @@ final class _NotificationsCard extends ConsumerWidget {
     final activityEnabled = ref.watch(
       householdActivityNotificationsEnabledProvider,
     );
+    final exemption = ref.watch(batteryExemptionGrantedProvider);
     // Until the platform answers, assume notifications work: showing the
-    // re-enable instructions for a moment on every visit would cry wolf.
+    // re-enable instructions for a moment on every visit would cry wolf. The
+    // same optimism applies to the battery advisory below.
     final blocked = systemEnabled.valueOrNull == false;
+    final throttled = exemption.valueOrNull == false;
     final enabled = activityEnabled.valueOrNull ?? true;
     return Card(
       key: const Key('notifications-card'),
@@ -194,55 +209,159 @@ final class _NotificationsCard extends ConsumerWidget {
                       .setHouseholdActivityEnabled(value)
                 : null,
           ),
+          const Divider(height: 1),
+          const _BackgroundDeliveryTile(),
           if (blocked) ...<Widget>[
             const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Row(
-                    children: <Widget>[
-                      Icon(
-                        Icons.notifications_off_outlined,
-                        size: 20,
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Android is blocking notifications',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  // Android will not re-show its permission dialog once it has
-                  // been answered, so an in-app "ask again" button would be a
-                  // lie. Instructions plus a re-check are the honest options.
-                  const Text(
-                    'Open Android Settings → Apps → Household Expenses → '
-                    'Notifications and allow them, then re-check here.',
-                  ),
-                  const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: OutlinedButton.icon(
-                      key: const Key('recheck-notification-permission-button'),
-                      onPressed: () =>
-                          ref.invalidate(systemNotificationsEnabledProvider),
-                      icon: const Icon(Icons.refresh),
-                      label: const Text('Re-check'),
-                    ),
-                  ),
-                ],
-              ),
+            _Advisory(
+              icon: Icons.notifications_off_outlined,
+              title: 'Android is blocking notifications',
+              color: Theme.of(context).colorScheme.error,
+              // Android will not re-show its permission dialog once it has been
+              // answered, so an in-app "ask again" button would be a lie. A
+              // shortcut to the right screen plus a re-check are the honest
+              // options.
+              body:
+                  'Allow notifications for Household Expenses in Android '
+                  'Settings, then re-check here.',
+              actions: <Widget>[
+                OutlinedButton.icon(
+                  key: const Key('open-app-settings-button'),
+                  onPressed: () => ref
+                      .read(notificationSettingsControllerProvider)
+                      .openAppSettings(),
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('Open settings'),
+                ),
+                OutlinedButton.icon(
+                  key: const Key('recheck-notification-permission-button'),
+                  onPressed: () =>
+                      ref.invalidate(systemNotificationsEnabledProvider),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Re-check'),
+                ),
+              ],
             ),
           ],
+          if (throttled) ...<Widget>[
+            const Divider(height: 1),
+            _Advisory(
+              icon: Icons.battery_saver_outlined,
+              title: 'Android is limiting background sync',
+              // A warning, not an error: everything still works, just later.
+              color: Theme.of(context).colorScheme.tertiary,
+              // Deliberately about background sync rather than about
+              // notifications: this stays true when the toggle above is off,
+              // and the other member's changes arrive just as late either way.
+              body:
+                  'Once the phone has been idle a while, Android defers this '
+                  "app's background sync — sometimes for hours — so the other "
+                  "member's changes, and any notification about them, arrive "
+                  'late. Allowing background activity lifts that limit.\n\n'
+                  'Clearing the app from Recents also stops background sync '
+                  'until you next open it. To avoid that, enable Autostart for '
+                  'Household Expenses in the Security app under Permissions.',
+              actions: <Widget>[
+                FilledButton.icon(
+                  key: const Key('request-battery-exemption-button'),
+                  onPressed: () => ref
+                      .read(notificationSettingsControllerProvider)
+                      .requestBatteryExemption(),
+                  icon: const Icon(Icons.battery_charging_full_outlined),
+                  label: const Text('Allow background activity'),
+                ),
+                // Not invalidated by the button above: the platform reports that
+                // its dialog opened, never what the member chose, so the app
+                // cannot know when the answer is ready to re-read.
+                OutlinedButton.icon(
+                  key: const Key('recheck-battery-exemption-button'),
+                  onPressed: () =>
+                      ref.invalidate(batteryExemptionGrantedProvider),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Re-check'),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Reports whether background sync is actually running on this device.
+///
+/// Distinct from the "Last synced" line on [SyncStatusCard], which any
+/// foreground sync also moves. Only this one can answer the question that
+/// matters for notifications while the app is closed, and a null answer — never
+/// run — is as informative as a timestamp.
+final class _BackgroundDeliveryTile extends ConsumerWidget {
+  const _BackgroundDeliveryTile();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final lastRun = ref.watch(lastBackgroundSyncProvider);
+    final String detail;
+    if (!lastRun.hasValue) {
+      detail = 'Checking…';
+    } else if (lastRun.valueOrNull == null) {
+      detail = 'Has not run yet on this device.';
+    } else {
+      detail =
+          'Last ran '
+          '${DhakaTime.initialize().formatDateTime(lastRun.valueOrNull!)}.';
+    }
+    return ListTile(
+      key: const Key('background-delivery-tile'),
+      leading: const Icon(Icons.sync_outlined),
+      title: const Text('Background sync'),
+      subtitle: Text(detail),
+    );
+  }
+}
+
+/// The shape both notification advisories share: a coloured heading, prose, and
+/// the actions that can do something about it.
+final class _Advisory extends StatelessWidget {
+  const _Advisory({
+    required this.icon,
+    required this.title,
+    required this.color,
+    required this.body,
+    required this.actions,
+  });
+
+  final IconData icon;
+  final String title;
+  final Color color;
+  final String body;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Icon(icon, size: 20, color: color),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(fontWeight: FontWeight.w700, color: color),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(body),
+          const SizedBox(height: 12),
+          // Wrapped rather than a Row: two labelled buttons overflow a narrow
+          // phone in the larger text scales.
+          Wrap(spacing: 8, runSpacing: 8, children: actions),
         ],
       ),
     );
