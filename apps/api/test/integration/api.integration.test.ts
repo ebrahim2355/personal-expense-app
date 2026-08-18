@@ -184,6 +184,7 @@ const authResponseSchema = z.object({
 const changeShape = {
   cursor: z.string(),
   operation: z.enum(['CREATED', 'UPDATED', 'DELETED']),
+  actorMember: z.enum(['SUMON', 'EBRAHIM']),
   originMutationId: z.uuid(),
 } as const;
 
@@ -660,6 +661,13 @@ integration('PostgreSQL API integration', () => {
     expect(new Set(expenseIdsOf(page.changes))).toEqual(
       new Set([sumonEntity, ebrahimEntity]),
     );
+    // Each change names its own author, which is how a pulling device tells the
+    // other member's activity apart from its own writes echoing back.
+    const authorByEntity = new Map(
+      page.changes.map((change) => [expenseOf(change).id, change.actorMember]),
+    );
+    expect(authorByEntity.get(sumonEntity)).toBe('SUMON');
+    expect(authorByEntity.get(ebrahimEntity)).toBe('EBRAHIM');
   });
 
   it('propagates updates and soft-delete tombstones', async () => {
@@ -854,6 +862,7 @@ integration('PostgreSQL API integration', () => {
             entityType: 'EXPENSE',
             entityVersion: 1,
             operation: 'CREATED',
+            actorMemberKey: 'SUMON',
             originMutationId: randomUUID(),
             snapshot: {
               id: allocatedFirstId,
