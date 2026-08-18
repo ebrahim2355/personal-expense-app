@@ -124,9 +124,25 @@ flutter clean
 
 ## Notifications
 
-`POST_NOTIFICATIONS` is requested once, on the first open after installation, and
-the attempt is recorded locally so it is never repeated. A denial is never fatal:
-sync, offline use, and every screen behave exactly as before.
+`POST_NOTIFICATIONS` is requested on the first open after installation, and on any
+later open while Android still reports notifications as off. The ask is gated on
+the platform's own answer rather than on a stored "already asked" flag: a flag
+cannot tell a real denial from an ask that never reached Android, so a single
+failed ask would leave a member unasked for the life of the install, with no way
+back short of reinstalling. Android shows its dialog only once per install and
+answers instantly afterwards, so re-asking costs one platform call and never a
+second dialog. The `SyncMetadata` timestamp records when the member first
+answered, and is written only once an answer has come back. A denial is never
+fatal: sync, offline use, and every screen behave exactly as before.
+
+The status-bar icon is listed in `android/app/src/main/res/raw/keep.xml`. The
+plugin resolves it from a name string at runtime, so nothing references it
+statically and the release resource shrinker deletes it as unreachable — after
+which the name fails to resolve, `initialize()` throws, and the app silently
+loses both the permission dialog and every notification. Debug builds do not
+shrink resources, so this only ever appears in a release APK. Verify a release
+build with `aapt2 dump resources build/app/outputs/flutter-apk/app-release.apk`
+and confirm `drawable/ic_stat_notification` is listed.
 
 Announcements ride on background sync, which runs every fifteen minutes at best.
 Fifteen minutes is WorkManager's floor rather than a guarantee — see the caveat
