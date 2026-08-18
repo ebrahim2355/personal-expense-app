@@ -46,6 +46,10 @@ final class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           const _DebugSyncDiagnosticsCard(),
         ],
         const SizedBox(height: 20),
+        Text('Notifications', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 6),
+        const _NotificationsCard(),
+        const SizedBox(height: 20),
         Text('App', style: Theme.of(context).textTheme.titleSmall),
         const SizedBox(height: 6),
         Card(
@@ -101,7 +105,8 @@ final class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 Text(
                   'Android decides when background work can run and does not '
                   'guarantee an immediate sync. Open the app or tap refresh '
-                  'to request one now.',
+                  'to request one now. Notifications about the other member '
+                  'arrive with that sync, so they inherit the same delay.',
                 ),
               ],
             ),
@@ -149,6 +154,98 @@ final class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
     setState(() => _loggingOut = true);
     await ref.read(authRepositoryProvider).logout();
+  }
+}
+
+final class _NotificationsCard extends ConsumerWidget {
+  const _NotificationsCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final systemEnabled = ref.watch(systemNotificationsEnabledProvider);
+    final activityEnabled = ref.watch(
+      householdActivityNotificationsEnabledProvider,
+    );
+    // Until the platform answers, assume notifications work: showing the
+    // re-enable instructions for a moment on every visit would cry wolf.
+    final blocked = systemEnabled.valueOrNull == false;
+    final enabled = activityEnabled.valueOrNull ?? true;
+    return Card(
+      key: const Key('notifications-card'),
+      margin: EdgeInsets.zero,
+      child: Column(
+        children: <Widget>[
+          SwitchListTile(
+            key: const Key('household-activity-switch'),
+            secondary: const Icon(Icons.notifications_active_outlined),
+            title: const Text('Household activity'),
+            subtitle: Text(
+              enabled
+                  ? 'Announce expenses, loans and periods the other member '
+                        'adds, edits or deletes.'
+                  : 'Nothing is announced. Sync keeps running as usual.',
+            ),
+            value: enabled,
+            // Disabled until the stream has delivered a value, so a tap cannot
+            // write a preference based on the placeholder above.
+            onChanged: activityEnabled.hasValue
+                ? (value) => ref
+                      .read(notificationSettingsControllerProvider)
+                      .setHouseholdActivityEnabled(value)
+                : null,
+          ),
+          if (blocked) ...<Widget>[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Row(
+                    children: <Widget>[
+                      Icon(
+                        Icons.notifications_off_outlined,
+                        size: 20,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Android is blocking notifications',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Theme.of(context).colorScheme.error,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  // Android will not re-show its permission dialog once it has
+                  // been answered, so an in-app "ask again" button would be a
+                  // lie. Instructions plus a re-check are the honest options.
+                  const Text(
+                    'Open Android Settings → Apps → Household Expenses → '
+                    'Notifications and allow them, then re-check here.',
+                  ),
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: OutlinedButton.icon(
+                      key: const Key('recheck-notification-permission-button'),
+                      onPressed: () =>
+                          ref.invalidate(systemNotificationsEnabledProvider),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Re-check'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }
 
