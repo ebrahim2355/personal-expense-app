@@ -155,7 +155,7 @@ final appStartupProvider = FutureProvider<void>((ref) async {
   // throws, so a denial or an unavailable platform cannot block startup.
   await ref
       .watch(notificationSettingsControllerProvider)
-      .requestPermissionOnFirstLaunch();
+      .ensureNotificationPermission();
   await ref.watch(syncTriggerControllerProvider).start();
 });
 

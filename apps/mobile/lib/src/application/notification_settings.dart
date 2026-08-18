@@ -40,21 +40,34 @@ final class NotificationSettingsController {
   final NotificationPermissions _permissions;
   final DateTime Function() _clock;
 
-  /// Asks for the notification permission the first time the app is opened after
-  /// install, and not again afterwards.
+  /// Asks for the notification permission unless Android is already showing
+  /// this app's notifications.
   ///
-  /// Android only shows its dialog once per install and answers instantly after
-  /// that, so the stored timestamp saves a pointless platform call rather than
-  /// guarding anything. That is also why it is stamped only once the ask has
-  /// returned: a launch interrupted mid-dialog then costs a repeat call instead
-  /// of the member's one chance to be asked.
-  Future<void> requestPermissionOnFirstLaunch() async {
+  /// Gated on the platform's own answer rather than on a stored "already asked"
+  /// flag. A flag cannot tell a real denial from an ask that never reached
+  /// Android, so one failed ask would leave the member permanently unasked with
+  /// no way back short of reinstalling — which is precisely what a
+  /// resource-shrunk status icon did. Android shows its dialog only on the first
+  /// ask of an install and answers instantly afterwards, so re-asking on a later
+  /// launch costs a single platform call and never a second dialog.
+  ///
+  /// The timestamp records when the member first answered. It is written only
+  /// once an answer has actually come back, and never rewritten.
+  Future<void> ensureNotificationPermission() async {
     try {
+      if (await _permissions.areNotificationsEnabled()) {
+        return;
+      }
+      final answer = await _permissions.requestPermission();
+      if (answer == null) {
+        // Nothing reached Android, so nothing is recorded and the next launch
+        // asks again.
+        return;
+      }
       final metadata = await _database.readSyncMetadata();
       if (metadata.notificationPermissionRequestedAt != null) {
         return;
       }
-      await _permissions.requestPermission();
       await _write(
         SyncMetadataCompanion(
           notificationPermissionRequestedAt: Value<DateTime>(_clock()),
