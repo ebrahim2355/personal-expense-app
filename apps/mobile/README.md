@@ -22,7 +22,8 @@ on raw Dio or Drift implementation types.
 - History: newest-first local rows with a local text search plus date, payer, and
   category filters, edit, and confirmed soft deletion.
 - Settings: signed-in member, API environment, app version, manual sync, logout,
-  a notifications card, and a concise local-data/background-sync explanation.
+  a notifications card with the background-delivery advisories, and a concise
+  local-data/background-sync explanation.
 
 Bottom navigation is Dashboard, Lending, History, and Settings.
 
@@ -150,15 +151,72 @@ below — so a notification can be late by much more than that. Opening the app 
 pulling to refresh syncs and announces immediately. Near-instant delivery would
 need FCM, which is deliberately out of scope for now.
 
-The Settings notifications card carries a household-activity switch and, whenever
-Android reports that notifications are blocked, a warning with instructions for
-re-enabling them in Android Settings plus a **Re-check** button. There is no
-in-app "ask again": Android does not re-show its dialog after a denial, so a
-button claiming to would be a lie. Turning the switch off silences announcements
-only; sync keeps running.
+The Settings notifications card carries a household-activity switch, a
+background-sync line, and up to two advisories. Whenever Android reports that
+notifications are blocked, a warning explains how to re-enable them and offers
+**Open settings** and **Re-check** buttons. There is no in-app "ask again":
+Android does not re-show its dialog after a denial, so a button claiming to would
+be a lie. Turning the switch off silences announcements only; sync keeps running.
 
 Android schedules background work on a best-effort basis. It cannot guarantee
 an immediate run or an exact interval, so foreground and manual triggers remain
 authoritative for freshness, and notification timing inherits the same limit —
 Doze and App Standby can stretch a fifteen-minute period to hours on an idle
 phone.
+
+## Background delivery on an idle phone
+
+The measurement that motivated the exemption: with the app closed and the phone
+idle, `adb shell am get-standby-bucket com.sumonebrahim.houseexpenses` reported
+**40 (RARE)** and `dumpsys jobscheduler` listed `WITHIN_QUOTA` as unsatisfied, so
+the fifteen-minute job was deferred for hours. In active use the same app sits in
+bucket 10 and runs on time. The power-save whitelist is the lever: an app that is
+ignoring battery optimisations moves to bucket **5 (EXEMPTED)** and leaves both
+Doze and the JobScheduler quota behind.
+
+`ensureBackgroundExemption()` therefore runs at startup immediately after the
+notification ask, in that order — allow notifications first, then keep them
+timely. It is gated on `PowerManager.isIgnoringBatteryOptimizations` rather than
+on the stored flag, so an install granted the exemption outside the app is never
+nagged, and it does **not** record an ask whose dialog failed to launch: some OEM
+builds have removed the activity, and recording that would spend the prompt on
+something nobody saw. Unlike `POST_NOTIFICATIONS` this dialog can be re-shown, so
+Settings offers a real **Allow background activity** button. Nothing invalidates
+the provider after that tap — Android reports only that the dialog opened, never
+what the member chose — so **Re-check** is the honest way back.
+
+`NotificationSettings.batteryExemptionGranted` is deliberately absent from
+`willNotify`. Battery optimisation governs *when* a notification arrives, not
+whether it can be posted, and folding it in would make Settings claim
+notifications are off when they are merely late.
+
+`SyncMetadata.lastBackgroundSyncAt` is written by `backgroundSyncDispatcher` for
+every outcome, an offline one included: the question it answers is whether
+Android let the worker run at all. It is written in the dispatcher rather than in
+`SyncCoordinator` so the coordinator stays ignorant of which isolate it is in,
+and it deliberately leaves `updatedAt` alone, which tracks the member's own
+settings. Null — the value on every upgraded install until the first run — is the
+answer to "has closed-app delivery ever worked here".
+
+Two limits survive a granted exemption. Clearing the app from Recents force-stops
+it on HyperOS/MIUI and cancels its jobs until the app is next opened; only the
+OEM Autostart toggle mitigates that, and no app can read or set it, so Settings
+gives instructions and a shortcut into the app's settings page. And this is still
+polling: FCM is the only route to near-instant delivery that survives a
+force-stop, and it stays out of scope.
+
+Verify on a device after installing: `adb shell dumpsys deviceidle whitelist`
+lists the package, `am get-standby-bucket` reports 5, and `dumpsys jobscheduler`
+shows `TIMING_DELAY` as the only unsatisfied constraint. Forcing a run with
+`cmd jobscheduler run -f` proves nothing — WorkManager answers "Delaying
+execution … because it is being executed before schedule" and reschedules.
+
+### Platform channel
+
+`background_work_policy.dart` is the app's only `MethodChannel`
+(`com.sumonebrahim.houseexpenses/background-work-policy`), hosted by
+`MainActivity.configureFlutterEngine`. It exposes the exemption query, the
+exemption dialog, and the app-details settings page; every call answers `false`
+rather than throwing, including when `startActivity` finds no activity. **It is
+usable only from the UI isolate** — the handler lives on the Activity, so the
+WorkManager isolate has no receiver and must never call it.

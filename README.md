@@ -285,6 +285,29 @@ notified about its own entries, and a fresh installation is silent while it
 downloads existing history. Settings has a switch to stop the announcements
 without affecting sync.
 
+Immediately after that, the first open also asks Android to exempt the app from
+battery optimisation. This is what makes closed-app delivery usable rather than
+theoretical: measured on a HyperOS phone, an idle unexempted install fell to App
+Standby bucket 40 (RARE) with the JobScheduler `WITHIN_QUOTA` constraint
+unsatisfied, which is the OS deferring the fifteen-minute sync for hours. The
+exemption moves the app to bucket 5 (EXEMPTED), outside both Doze and the
+JobScheduler quota. Unlike the notification dialog this one can be re-shown, so
+Settings offers a real "Allow background activity" button; the stored timestamp
+exists only to avoid asking on every launch, and a dialog that never opened is
+not recorded as an ask. The exemption governs *when* a notification arrives, not
+whether it can be posted, so it is deliberately excluded from the "will notify"
+decision.
+
+Two limits remain, and Settings says both rather than implying the advisory being
+clear means instant delivery. Clearing the app from Recents force-stops it on
+HyperOS/MIUI and cancels its background work until the app is next opened; only
+the OEM's Autostart toggle mitigates that, and no app can read or set it, so the
+app gives instructions instead. And even fully exempted this is still polling —
+FCM is the only route to near-instant delivery that survives a force-stop, and it
+stays deferred. Settings shows when the background isolate last completed a run,
+which is the one honest answer to "is closed-app delivery working at all"; null
+means it never has on this install.
+
 ## Production deployment and Android installation
 
 Two hosts are described, and their committed configuration files coexist

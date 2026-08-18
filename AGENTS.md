@@ -80,6 +80,9 @@ The lending ledger is summed separately as `ebrahimOwesMinor - sumonOwesMinor` o
 - Trigger sync on launch, foreground resume, local mutation, manual refresh, network recovery while alive, and best-effort Android background work. Android does not guarantee immediate or exact background execution.
 - Every change row names its author in `actorMember`, which the server assigns from the authenticated identity. Decide notifications from that field alone. A missing outbox row does not identify the other member: acknowledging your own write deletes the row before the same change arrives in the feed.
 - Announce only the other member's changes, only from the change feed, and only after the page transaction has committed. Bootstrap never notifies, and an unattributed change — an older API — never notifies.
+- Ask Android for the battery-optimization exemption at startup, right after the notification ask. Gate it on `PowerManager.isIgnoringBatteryOptimizations`, not on the stored flag, and never record an ask whose dialog failed to launch. Without the exemption an idle phone drops the app to App Standby bucket 40 (RARE) and defers the fifteen-minute job for hours. Keep the exemption out of the "will notify" decision: it governs when a notification arrives, not whether it can be posted.
+- `background_work_policy.dart` and its `MainActivity` handler are the only platform channel in the app, and they are **UI-isolate only** — the handler lives on the Activity, so the WorkManager isolate has no receiver. Every channel call answers `false` rather than throwing.
+- Record `lastBackgroundSyncAt` from the background dispatcher for every outcome, offline included: the column answers whether Android ran the worker, which no other stored value can. Write it outside `SyncCoordinator` so the coordinator stays ignorant of its isolate, and leave `updatedAt` alone.
 
 ## Validation and security expectations
 
