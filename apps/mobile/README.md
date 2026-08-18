@@ -180,10 +180,19 @@ timely. It is gated on `PowerManager.isIgnoringBatteryOptimizations` rather than
 on the stored flag, so an install granted the exemption outside the app is never
 nagged, and it does **not** record an ask whose dialog failed to launch: some OEM
 builds have removed the activity, and recording that would spend the prompt on
-something nobody saw. Unlike `POST_NOTIFICATIONS` this dialog can be re-shown, so
+something nobody saw. Unlike `POST_NOTIFICATIONS` this ask can be re-shown, so
 Settings offers a real **Allow background activity** button. Nothing invalidates
-the provider after that tap — Android reports only that the dialog opened, never
+the provider after that tap — Android reports only that the screen opened, never
 what the member chose — so **Re-check** is the honest way back.
+
+What that intent opens is OEM-specific, and on the HyperOS phone this ships to it
+is not a dialog at all: it is a **Battery details** screen whose `Battery saver`
+section offers four options, defaulted to `Battery saver (recommended)`. The one
+equivalent to the power-save whitelist is **No restrictions**; choosing it adds
+the `user,com.sumonebrahim.houseexpenses` entry to `dumpsys deviceidle whitelist`
+and moves the app to bucket 5. The advisory copy names that option explicitly,
+because a member told only to "allow background activity" will pick the
+recommended-looking one and change nothing.
 
 `NotificationSettings.batteryExemptionGranted` is deliberately absent from
 `willNotify`. Battery optimisation governs *when* a notification arrives, not

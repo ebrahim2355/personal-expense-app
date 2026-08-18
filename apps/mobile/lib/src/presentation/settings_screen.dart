@@ -253,11 +253,19 @@ final class _NotificationsCard extends ConsumerWidget {
               // Deliberately about background sync rather than about
               // notifications: this stays true when the toggle above is off,
               // and the other member's changes arrive just as late either way.
+              // Names the OEM's own wording for the control. Android's intent
+              // opens a whole battery screen on this phone rather than a
+              // yes/no dialog, and its default option is called "Battery
+              // saver" — a member told only to "allow background activity"
+              // picks that and changes nothing.
               body:
                   'Once the phone has been idle a while, Android defers this '
                   "app's background sync — sometimes for hours — so the other "
                   "member's changes, and any notification about them, arrive "
-                  'late. Allowing background activity lifts that limit.\n\n'
+                  'late.\n\n'
+                  'The button below opens this app\'s battery screen. Choose '
+                  '"No restrictions" there; "Battery saver", the default, is '
+                  'what causes the delay.\n\n'
                   'Clearing the app from Recents also stops background sync '
                   'until you next open it. To avoid that, enable Autostart for '
                   'Household Expenses in the Security app under Permissions.',
@@ -271,7 +279,7 @@ final class _NotificationsCard extends ConsumerWidget {
                   label: const Text('Allow background activity'),
                 ),
                 // Not invalidated by the button above: the platform reports that
-                // its dialog opened, never what the member chose, so the app
+                // its screen opened, never what the member chose, so the app
                 // cannot know when the answer is ready to re-read.
                 OutlinedButton.icon(
                   key: const Key('recheck-battery-exemption-button'),
