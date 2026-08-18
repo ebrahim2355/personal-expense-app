@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'application/notification_settings.dart';
 import 'application/session_controller.dart';
 import 'application/sync_coordinator.dart';
 import 'application/sync_triggers.dart';
@@ -17,6 +18,9 @@ import 'domain/expense.dart';
 import 'domain/loan.dart';
 import 'domain/session.dart';
 import 'domain/spending_period.dart';
+import 'notifications/household_activity_notifier.dart';
+import 'notifications/local_notification_presenter.dart';
+import 'notifications/notification_permissions.dart';
 
 final appConfigProvider = Provider<AppConfig>((ref) {
   return AppConfig.fromEnvironment();
@@ -85,10 +89,35 @@ final authRepositoryProvider = Provider<MemberAuthRepository>((ref) {
   );
 });
 
+/// The one presenter both roles share, so the plugin is initialized once per
+/// isolate. The background isolate builds its own — see `background_sync.dart`.
+final localNotificationPresenterProvider = Provider<LocalNotificationPresenter>(
+  (ref) => LocalNotificationPresenter(),
+);
+
+final householdActivityNotifierProvider = Provider<HouseholdActivityNotifier>(
+  (ref) => ref.watch(localNotificationPresenterProvider),
+);
+
+final notificationPermissionsProvider = Provider<NotificationPermissions>(
+  (ref) => ref.watch(localNotificationPresenterProvider),
+);
+
+final notificationSettingsControllerProvider =
+    Provider<NotificationSettingsController>((ref) {
+      return NotificationSettingsController(
+        database: ref.watch(appDatabaseProvider),
+        permissions: ref.watch(notificationPermissionsProvider),
+      );
+    });
+
 final syncCoordinatorProvider = Provider<SyncCoordinator>((ref) {
   final coordinator = SyncCoordinator(
     database: ref.watch(appDatabaseProvider),
     api: ref.watch(expenseSyncApiProvider),
+    // The user asked for notifications even while the app is open, so the
+    // foreground coordinator announces on the same terms as the background one.
+    notifier: ref.watch(householdActivityNotifierProvider),
   );
   ref.onDispose(coordinator.close);
   return coordinator;
@@ -121,7 +150,31 @@ final appStartupProvider = FutureProvider<void>((ref) async {
   if (session.current.status == SessionStatus.signedIn && identity == null) {
     await auth.signOutLocally();
   }
+  // Before sync starts, and regardless of sign-in state: the ask belongs to the
+  // first open after install, which is often the sign-in screen. It never
+  // throws, so a denial or an unavailable platform cannot block startup.
+  await ref
+      .watch(notificationSettingsControllerProvider)
+      .requestPermissionOnFirstLaunch();
   await ref.watch(syncTriggerControllerProvider).start();
+});
+
+/// Whether Android will show this app's notifications. A `FutureProvider` rather
+/// than a stream because the platform offers no change notification — the
+/// Settings screen invalidates it to re-check after a trip to Android Settings.
+final systemNotificationsEnabledProvider = FutureProvider<bool>((ref) {
+  return ref
+      .watch(notificationSettingsControllerProvider)
+      .read()
+      .then((settings) => settings.systemEnabled);
+});
+
+final householdActivityNotificationsEnabledProvider = StreamProvider<bool>((
+  ref,
+) {
+  return ref
+      .watch(notificationSettingsControllerProvider)
+      .watchHouseholdActivityEnabled();
 });
 
 final visibleExpensesProvider = StreamProvider<List<Expense>>((ref) {
