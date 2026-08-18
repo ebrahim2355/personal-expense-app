@@ -11,6 +11,7 @@ import '../data/remote/api_models.dart';
 import '../data/remote/http_transport.dart';
 import '../data/repositories/expense_repository.dart';
 import '../domain/expense.dart';
+import '../notifications/household_activity_notifier.dart';
 
 enum SyncOutcome { completed, offline, authenticationRequired, failed }
 
@@ -70,6 +71,7 @@ final class SyncCoordinator {
     required this._api,
     RetryPolicy? retryPolicy,
     DateTime Function()? clock,
+    this._notifier,
     this.pageSize = 100,
   }) : _retryPolicy = retryPolicy ?? RetryPolicy(),
        _clock = clock ?? _utcNow;
@@ -80,6 +82,13 @@ final class SyncCoordinator {
   final ExpenseSyncApi _api;
   final RetryPolicy _retryPolicy;
   final DateTime Function() _clock;
+
+  /// Announces the other member's incoming activity, or null to stay silent.
+  ///
+  /// Injected and awaited rather than exposed as another broadcast stream: the
+  /// WorkManager isolate exits as soon as [synchronize] returns, so a listener
+  /// registered on a stream might never get to run.
+  final HouseholdActivityNotifier? _notifier;
   final int pageSize;
   final StreamController<SyncNotice> _notices =
       StreamController<SyncNotice>.broadcast();
@@ -506,7 +515,9 @@ final class SyncCoordinator {
       }
       await _database.transaction(() async {
         // The server pages periods before expenses before loans, so an expense
-        // never lands before the period it names.
+        // never lands before the period it names. Bootstrap goes straight to the
+        // snapshot writer and never through _applyRemoteChange, which is what
+        // keeps a fresh install from announcing the household's whole history.
         for (final item in page.items) {
           await _applyRemoteSnapshot(item);
         }
@@ -540,11 +551,22 @@ final class SyncCoordinator {
     if (cursor == null) {
       throw const FormatException('Bootstrap did not establish a cursor.');
     }
+    // Read once per run. Without a recorded member there is no way to tell the
+    // other member's writes apart from this device's own echoing back, so an
+    // unidentified device announces nothing rather than announcing wrongly.
+    final self = _selfMember(metadata.memberKey);
+    final notifier = metadata.householdActivityNotificationsEnabled
+        ? _notifier
+        : null;
     while (true) {
       final page = await _api.pullChanges(cursor: cursor, limit: pageSize);
+      final incoming = <HouseholdActivity>[];
       await _database.transaction(() async {
         for (final change in page.changes) {
-          await _applyRemoteChange(change);
+          final activity = await _applyRemoteChange(change, self: self);
+          if (activity != null) {
+            incoming.add(activity);
+          }
         }
         await (_database.update(
           _database.syncMetadata,
@@ -555,6 +577,13 @@ final class SyncCoordinator {
           ),
         );
       });
+      // Deliberately after the commit. Announcing inside the transaction would
+      // promise a change that a rollback then takes back; announcing after it
+      // means a crash in the gap loses a notification, which is no worse than
+      // today's silence and the safer of the two failures.
+      if (notifier != null && incoming.isNotEmpty) {
+        await notifier.announce(incoming);
+      }
       cursor = page.nextCursor;
       if (!page.hasMore) {
         return;
@@ -566,35 +595,77 @@ final class SyncCoordinator {
     }
   }
 
-  Future<void> _applyRemoteChange(ChangeDto change) async {
+  /// This device's own member, or null when none has been recorded yet.
+  HouseholdMember? _selfMember(String? storedKey) {
+    if (storedKey == null) {
+      return null;
+    }
+    try {
+      return HouseholdMemberWire.parse(storedKey);
+    } on FormatException {
+      // An unreadable stored key must not fail a sync. It only costs
+      // notifications, and the next sign-in rewrites it.
+      return null;
+    }
+  }
+
+  /// Applies one change, and reports it when it is news from the other member.
+  ///
+  /// Returns null whenever there is nothing to announce: an acknowledgement of
+  /// this device's own queued mutation, a snapshot that local state outranked, a
+  /// change the server did not attribute, or a change this device authored.
+  Future<HouseholdActivity?> _applyRemoteChange(
+    ChangeDto change, {
+    required HouseholdMember? self,
+  }) async {
     final originating =
         await (_database.select(_database.outboxMutations)
               ..where((row) => row.mutationId.equals(change.originMutationId)))
             .getSingleOrNull();
     if (originating != null) {
       await _acknowledgeMutation(originating, change.snapshot);
-      return;
+      return null;
     }
-    await _applyRemoteSnapshot(change.snapshot);
+    final applied = await _applyRemoteSnapshot(change.snapshot);
+    if (!applied) {
+      return null;
+    }
+    final actor = change.actorMember;
+    // The author is the only reliable discriminator. A change this device wrote
+    // reaches this point whenever the push earlier in the same run already
+    // deleted its outbox row, so a missing outbox row says nothing about who
+    // wrote it. An unattributed change comes from an API deployed before change
+    // authorship existed; announcing it could self-notify, so it stays quiet.
+    if (actor == null || self == null || actor == self) {
+      return null;
+    }
+    return HouseholdActivity(
+      actor: actor,
+      operation: change.operation,
+      snapshot: change.snapshot,
+    );
   }
 
-  Future<void> _applyRemoteSnapshot(EntitySnapshotDto remote) async {
+  /// Writes the server's snapshot unless local state outranks it. Reports
+  /// whether anything was actually written.
+  Future<bool> _applyRemoteSnapshot(EntitySnapshotDto remote) async {
     final pending =
         await (_database.select(_database.outboxMutations)
               ..where((row) => row.entityId.equals(remote.entityId))
               ..limit(1))
             .getSingleOrNull();
     if (pending != null) {
-      return;
+      return false;
     }
     final localVersion = await _localVersion(
       remote.entityType,
       remote.entityId,
     );
     if (localVersion != null && localVersion > remote.version) {
-      return;
+      return false;
     }
     await _upsertAuthoritative(remote);
+    return true;
   }
 
   Future<int?> _localVersion(
