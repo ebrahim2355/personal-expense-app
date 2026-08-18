@@ -11,6 +11,7 @@ import '../data/remote/api_client.dart';
 import '../data/remote/http_transport.dart';
 import '../data/security/token_store.dart';
 import '../domain/session.dart';
+import '../notifications/local_notification_presenter.dart';
 
 const String backgroundSyncTask = 'household-expenses.sync';
 const String periodicSyncWork = 'household-expenses.periodic-sync';
@@ -37,6 +38,10 @@ void backgroundSyncDispatcher() {
           sessionController: session,
         ),
       ),
+      // This is the isolate that matters for the closed app, and it is a
+      // separate one from the UI's, so it builds its own presenter. The plugin
+      // is registered above; the presenter initializes itself on first use.
+      notifier: LocalNotificationPresenter(),
     );
     try {
       await session.initialize();
@@ -74,7 +79,11 @@ final class AndroidBackgroundSyncScheduler implements BackgroundSyncScheduler {
   Future<void> registerPeriodicSync() => Workmanager().registerPeriodicTask(
     periodicSyncWork,
     backgroundSyncTask,
-    frequency: const Duration(hours: 6),
+    // WorkManager's own floor. Notifications about the other member's activity
+    // are only as timely as this poll, and Doze and App Standby can stretch a
+    // real interval to hours on an idle phone, so this is the best a
+    // polling-only design can promise rather than a guarantee.
+    frequency: const Duration(minutes: 15),
     constraints: _networkConstraint,
     existingWorkPolicy: ExistingPeriodicWorkPolicy.update,
     backoffPolicy: BackoffPolicy.exponential,
