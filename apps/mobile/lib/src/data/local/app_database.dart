@@ -92,6 +92,17 @@ class SyncMetadata extends Table {
   DateTimeColumn get updatedAt => dateTime()();
   DateTimeColumn get lastSuccessfulSyncAt => dateTime().nullable()();
 
+  /// When Android's notification permission was last asked for, or null when it
+  /// never has been. Android shows its dialog only once per install, so this is
+  /// what keeps the first-launch request from being attempted on every launch.
+  DateTimeColumn get notificationPermissionRequestedAt =>
+      dateTime().nullable()();
+
+  /// Whether the other member's activity is announced on this device. Defaults
+  /// to on: a member who granted the permission asked to be told.
+  BoolColumn get householdActivityNotificationsEnabled =>
+      boolean().withDefault(const Constant<bool>(true))();
+
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{singletonId};
 }
@@ -117,7 +128,7 @@ final class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -131,13 +142,16 @@ final class AppDatabase extends _$AppDatabase {
       );
     },
     onUpgrade: (Migrator migrator, int from, int to) async {
-      if (from < 2) {
+      // Each step checks `to` as well as `from`: on a device `to` is always the
+      // current schemaVersion, but the migration tests replay history one
+      // version at a time and must stop where they aimed.
+      if (from < 2 && to >= 2) {
         await migrator.addColumn(
           syncMetadata,
           syncMetadata.lastSuccessfulSyncAt,
         );
       }
-      if (from < 3) {
+      if (from < 3 && to >= 3) {
         // Spending periods and the lending ledger arrive together. Existing
         // expenses keep a null periodId: the next bootstrap stamps them, and
         // until then their replayed mutations let the server choose the period.
@@ -146,8 +160,22 @@ final class AppDatabase extends _$AppDatabase {
         await migrator.addColumn(localExpenses, localExpenses.periodId);
         await migrator.addColumn(outboxMutations, outboxMutations.entityType);
       }
+      if (from < 4 && to >= 4) {
+        // Notification preferences only. Echo detection needs no local state:
+        // the change feed names each change's author, so an upgrading device
+        // needs nothing carried over. The default keeps announcements on, and a
+        // null request timestamp means the permission dialog is still owed.
+        await migrator.addColumn(
+          syncMetadata,
+          syncMetadata.notificationPermissionRequestedAt,
+        );
+        await migrator.addColumn(
+          syncMetadata,
+          syncMetadata.householdActivityNotificationsEnabled,
+        );
+      }
       // Every future schema version must add an explicit, tested migration.
-      if (to > 3) {
+      if (to > 4) {
         throw StateError('Missing database migration from $from to $to.');
       }
     },
