@@ -126,6 +126,7 @@ void main() {
             changes: <ChangeDto>[
               ChangeDto(
                 cursor: 'cursor-1',
+                operation: ChangeOperation.created,
                 originMutationId: '10000000-0000-4000-8000-000000000001',
                 snapshot: expenseSnapshot(firstExpense),
               ),
@@ -137,6 +138,7 @@ void main() {
             changes: <ChangeDto>[
               ChangeDto(
                 cursor: 'cursor-2',
+                operation: ChangeOperation.created,
                 originMutationId: '10000000-0000-4000-8000-000000000002',
                 snapshot: expenseSnapshot(secondExpense),
               ),
@@ -182,6 +184,7 @@ void main() {
             changes: <ChangeDto>[
               ChangeDto(
                 cursor: 'cursor-2',
+                operation: ChangeOperation.deleted,
                 originMutationId: '10000000-0000-4000-8000-000000000003',
                 snapshot: expenseSnapshot(deleted),
               ),
@@ -352,6 +355,7 @@ void main() {
           changes: <ChangeDto>[
             ChangeDto(
               cursor: 'cursor-2',
+              operation: ChangeOperation.updated,
               originMutationId: '10000000-0000-4000-8000-000000000004',
               snapshot: periodSnapshot(
                 remotePeriod(
@@ -364,6 +368,7 @@ void main() {
             ),
             ChangeDto(
               cursor: 'cursor-3',
+              operation: ChangeOperation.created,
               originMutationId: '10000000-0000-4000-8000-000000000005',
               snapshot: periodSnapshot(
                 remotePeriod(
@@ -441,6 +446,7 @@ void main() {
           changes: <ChangeDto>[
             ChangeDto(
               cursor: 'cursor-2',
+              operation: ChangeOperation.deleted,
               originMutationId: '10000000-0000-4000-8000-000000000006',
               snapshot: loanSnapshot(
                 remoteLoan(
@@ -500,5 +506,429 @@ void main() {
       (await database.findLoanRow(loan.id))!.syncState,
       LocalSyncState.needsAttention.storedName,
     );
+  });
+
+  group('household activity notifications', () {
+    const otherMemberExpense = '00000000-0000-4000-8000-000000000020';
+
+    /// A change feed carrying one expense written by Sumon, which is the other
+    /// member on a device signed in as Ebrahim.
+    FakeExpenseSyncApi apiWithSumonsExpense({
+      HouseholdMember? actorMember = HouseholdMember.sumon,
+    }) {
+      return FakeExpenseSyncApi(
+        changePages: <ChangePageDto>[
+          ChangePageDto(
+            changes: <ChangeDto>[
+              ChangeDto(
+                cursor: 'cursor-2',
+                operation: ChangeOperation.created,
+                actorMember: actorMember,
+                originMutationId: '10000000-0000-4000-8000-000000000020',
+                snapshot: expenseSnapshot(
+                  remoteExpense(
+                    id: otherMemberExpense,
+                    amountMinor: 45000,
+                    note: 'Rice',
+                  ),
+                ),
+              ),
+            ],
+            nextCursor: 'cursor-2',
+            hasMore: false,
+          ),
+        ],
+      );
+    }
+
+    test('announces a change the other member made', () async {
+      final notifier = RecordingActivityNotifier();
+      final coordinator = SyncCoordinator(
+        database: database,
+        api: apiWithSumonsExpense(),
+        notifier: notifier,
+      );
+      addTearDown(coordinator.close);
+      await recordDeviceMember(database, HouseholdMember.ebrahim);
+
+      expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+
+      final activity = notifier.announced.single;
+      expect(activity.actor, HouseholdMember.sumon);
+      expect(activity.operation, ChangeOperation.created);
+      expect(activity.entityType, SyncEntityType.expense);
+      expect(activity.snapshot.entityId, otherMemberExpense);
+      expect(activity.dedupeKey, '$otherMemberExpense:1');
+    });
+
+    test('stays silent about your own write echoing back', () async {
+      // The regression test for self-notification. The push deletes the outbox
+      // row before the pull runs in the very same sync, so the change comes back
+      // with no outbox row to match it and only its author says it began here.
+      final notifier = RecordingActivityNotifier();
+      await recordDeviceMember(database, HouseholdMember.ebrahim);
+      final local = await repository.create(
+        ExpenseDraft(
+          amountMinor: 30000,
+          category: ExpenseCategory.groceries,
+          payer: HouseholdMember.ebrahim,
+          occurredAt: DateTime.utc(2026, 8, 14),
+        ),
+      );
+      final queued =
+          (await database.select(database.outboxMutations).get()).single;
+      final api = FakeExpenseSyncApi(
+        changePages: <ChangePageDto>[
+          ChangePageDto(
+            changes: <ChangeDto>[
+              ChangeDto(
+                cursor: 'cursor-2',
+                operation: ChangeOperation.created,
+                actorMember: HouseholdMember.ebrahim,
+                originMutationId: queued.mutationId,
+                snapshot: expenseSnapshot(
+                  remoteExpense(
+                    id: local.id,
+                    amountMinor: 30000,
+                    payer: HouseholdMember.ebrahim,
+                  ),
+                ),
+              ),
+            ],
+            nextCursor: 'cursor-2',
+            hasMore: false,
+          ),
+        ],
+      );
+      final coordinator = SyncCoordinator(
+        database: database,
+        api: api,
+        notifier: notifier,
+      );
+      addTearDown(coordinator.close);
+
+      expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+
+      expect(notifier.batches, isEmpty);
+      expect(await database.select(database.outboxMutations).get(), isEmpty);
+      expect((await repository.readVisibleExpenses()).single.id, local.id);
+    });
+
+    test('stays silent through the first bootstrap', () async {
+      final notifier = RecordingActivityNotifier();
+      final api = FakeExpenseSyncApi(
+        bootstrapPages: <BootstrapPageDto>[
+          BootstrapPageDto(
+            items: <BootstrapItemDto>[
+              periodSnapshot(
+                remotePeriod(
+                  id: '20000000-0000-4000-8000-000000000020',
+                  sequenceNumber: 1,
+                ),
+              ),
+              expenseSnapshot(
+                remoteExpense(id: otherMemberExpense, amountMinor: 45000),
+              ),
+            ],
+            watermarkCursor: 'cursor-1',
+            nextPageToken: null,
+            hasMore: false,
+          ),
+        ],
+      );
+      final coordinator = SyncCoordinator(
+        database: database,
+        api: api,
+        notifier: notifier,
+      );
+      addTearDown(coordinator.close);
+      await recordDeviceMember(database, HouseholdMember.ebrahim);
+
+      expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+
+      // A fresh install downloads the household's whole history. Announcing it
+      // would bury the member under notifications for entries they have seen.
+      expect(notifier.batches, isEmpty);
+      expect(await repository.readVisibleExpenses(), hasLength(1));
+    });
+
+    test('stays silent when local state outranks the change', () async {
+      final notifier = RecordingActivityNotifier();
+      // Version 2 arrives in the bootstrap, so the version-1 change that follows
+      // is stale and nothing is written. Announcing it would describe a state
+      // that is not what the member would find on screen.
+      final api = FakeExpenseSyncApi(
+        bootstrapPages: <BootstrapPageDto>[
+          BootstrapPageDto(
+            items: <BootstrapItemDto>[
+              expenseSnapshot(
+                remoteExpense(
+                  id: otherMemberExpense,
+                  amountMinor: 99000,
+                  version: 2,
+                ),
+              ),
+            ],
+            watermarkCursor: 'cursor-1',
+            nextPageToken: null,
+            hasMore: false,
+          ),
+        ],
+        changePages: <ChangePageDto>[
+          ChangePageDto(
+            changes: <ChangeDto>[
+              ChangeDto(
+                cursor: 'cursor-2',
+                operation: ChangeOperation.updated,
+                actorMember: HouseholdMember.sumon,
+                originMutationId: '10000000-0000-4000-8000-000000000020',
+                snapshot: expenseSnapshot(
+                  remoteExpense(id: otherMemberExpense, amountMinor: 45000),
+                ),
+              ),
+            ],
+            nextCursor: 'cursor-2',
+            hasMore: false,
+          ),
+        ],
+      );
+      final coordinator = SyncCoordinator(
+        database: database,
+        api: api,
+        notifier: notifier,
+      );
+      addTearDown(coordinator.close);
+      await recordDeviceMember(database, HouseholdMember.ebrahim);
+
+      expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+
+      expect(notifier.batches, isEmpty);
+      final stored = (await repository.readVisibleExpenses()).single;
+      expect(stored.version, 2);
+      expect(stored.amountMinor, 99000);
+    });
+
+    test('stays silent while a local edit is still queued', () async {
+      final notifier = RecordingActivityNotifier();
+      await recordDeviceMember(database, HouseholdMember.ebrahim);
+      final local = await repository.create(
+        ExpenseDraft(
+          amountMinor: 30000,
+          category: ExpenseCategory.groceries,
+          payer: HouseholdMember.ebrahim,
+          occurredAt: DateTime.utc(2026, 8, 14),
+        ),
+      );
+      // The push is rejected, so the mutation stays in the outbox needing the
+      // member's attention. The pull then leaves that entity alone, and a change
+      // that was never applied must not be announced.
+      final api = FakeExpenseSyncApi(
+        pushHandler: (mutations) async => mutations
+            .map(
+              (mutation) => MutationResultDto(
+                mutationId: mutation.mutationId,
+                status: MutationResultStatus.rejected,
+                entityType: mutation.entityType,
+                code: 'VALIDATION_FAILED',
+              ),
+            )
+            .toList(growable: false),
+        changePages: <ChangePageDto>[
+          ChangePageDto(
+            changes: <ChangeDto>[
+              ChangeDto(
+                cursor: 'cursor-2',
+                operation: ChangeOperation.updated,
+                actorMember: HouseholdMember.sumon,
+                originMutationId: '10000000-0000-4000-8000-000000000020',
+                snapshot: expenseSnapshot(
+                  remoteExpense(id: local.id, amountMinor: 45000, version: 3),
+                ),
+              ),
+            ],
+            nextCursor: 'cursor-2',
+            hasMore: false,
+          ),
+        ],
+      );
+      final coordinator = SyncCoordinator(
+        database: database,
+        api: api,
+        notifier: notifier,
+      );
+      addTearDown(coordinator.close);
+
+      expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+
+      expect(notifier.batches, isEmpty);
+      final stored = (await repository.readVisibleExpenses()).single;
+      expect(stored.amountMinor, 30000);
+      expect(
+        await database.select(database.outboxMutations).get(),
+        hasLength(1),
+      );
+    });
+
+    test('announces nothing when the page transaction fails', () async {
+      final notifier = RecordingActivityNotifier();
+      final api = FakeExpenseSyncApi(
+        changePages: <ChangePageDto>[
+          ChangePageDto(
+            changes: <ChangeDto>[
+              ChangeDto(
+                cursor: 'cursor-2',
+                operation: ChangeOperation.created,
+                actorMember: HouseholdMember.sumon,
+                originMutationId: '10000000-0000-4000-8000-000000000021',
+                snapshot: expenseSnapshot(
+                  remoteExpense(id: otherMemberExpense, amountMinor: 45000),
+                ),
+              ),
+              ChangeDto(
+                cursor: 'cursor-3',
+                operation: ChangeOperation.created,
+                actorMember: HouseholdMember.sumon,
+                originMutationId: '10000000-0000-4000-8000-000000000022',
+                snapshot: malformedSnapshot(),
+              ),
+            ],
+            nextCursor: 'cursor-3',
+            hasMore: false,
+          ),
+        ],
+      );
+      final coordinator = SyncCoordinator(
+        database: database,
+        api: api,
+        notifier: notifier,
+      );
+      addTearDown(coordinator.close);
+      await recordDeviceMember(database, HouseholdMember.ebrahim);
+
+      expect((await coordinator.synchronize()).outcome, SyncOutcome.failed);
+
+      // The first change was collected before the failure, but the transaction
+      // rolled it back. Announcing it would promise an entry the member cannot
+      // find, so posting waits until after the commit.
+      expect(notifier.batches, isEmpty);
+      expect(await database.findExpenseRow(otherMemberExpense), isNull);
+      expect((await database.readSyncMetadata()).lastCursor, 'cursor-0');
+    });
+
+    test('respects the Settings switch being off', () async {
+      final notifier = RecordingActivityNotifier();
+      final coordinator = SyncCoordinator(
+        database: database,
+        api: apiWithSumonsExpense(),
+        notifier: notifier,
+      );
+      addTearDown(coordinator.close);
+      await recordDeviceMember(
+        database,
+        HouseholdMember.ebrahim,
+        announcementsEnabled: false,
+      );
+
+      expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+
+      // Silenced, but still synced: the switch turns off announcements only.
+      expect(notifier.batches, isEmpty);
+      expect(await repository.readVisibleExpenses(), hasLength(1));
+    });
+
+    test('stays silent when the API did not attribute the change', () async {
+      final notifier = RecordingActivityNotifier();
+      final coordinator = SyncCoordinator(
+        database: database,
+        api: apiWithSumonsExpense(actorMember: null),
+        notifier: notifier,
+      );
+      addTearDown(coordinator.close);
+      await recordDeviceMember(database, HouseholdMember.ebrahim);
+
+      expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+
+      // An APK running against an API deployed before change authorship. It must
+      // keep syncing, and it must not guess who wrote what.
+      expect(notifier.batches, isEmpty);
+      expect(await repository.readVisibleExpenses(), hasLength(1));
+    });
+
+    test('announces one batch per page, in the applied order', () async {
+      final notifier = RecordingActivityNotifier();
+      final api = FakeExpenseSyncApi(
+        changePages: <ChangePageDto>[
+          ChangePageDto(
+            changes: <ChangeDto>[
+              ChangeDto(
+                cursor: 'cursor-2',
+                operation: ChangeOperation.created,
+                actorMember: HouseholdMember.sumon,
+                originMutationId: '10000000-0000-4000-8000-000000000023',
+                snapshot: expenseSnapshot(
+                  remoteExpense(id: otherMemberExpense, amountMinor: 45000),
+                ),
+              ),
+              ChangeDto(
+                cursor: 'cursor-3',
+                operation: ChangeOperation.created,
+                actorMember: HouseholdMember.sumon,
+                originMutationId: '10000000-0000-4000-8000-000000000024',
+                snapshot: loanSnapshot(
+                  remoteLoan(
+                    id: '30000000-0000-4000-8000-000000000020',
+                    amountMinor: 100000,
+                  ),
+                ),
+              ),
+            ],
+            nextCursor: 'cursor-3',
+            hasMore: true,
+          ),
+          ChangePageDto(
+            changes: <ChangeDto>[
+              ChangeDto(
+                cursor: 'cursor-4',
+                operation: ChangeOperation.created,
+                actorMember: HouseholdMember.sumon,
+                originMutationId: '10000000-0000-4000-8000-000000000025',
+                snapshot: periodSnapshot(
+                  remotePeriod(
+                    id: '20000000-0000-4000-8000-000000000021',
+                    sequenceNumber: 1,
+                  ),
+                ),
+              ),
+            ],
+            nextCursor: 'cursor-4',
+            hasMore: false,
+          ),
+        ],
+      );
+      final coordinator = SyncCoordinator(
+        database: database,
+        api: api,
+        notifier: notifier,
+      );
+      addTearDown(coordinator.close);
+      await recordDeviceMember(database, HouseholdMember.ebrahim);
+
+      expect((await coordinator.synchronize()).outcome, SyncOutcome.completed);
+
+      // One announcement per committed page, so a member who was offline for a
+      // while is told about a page as soon as that page is durable.
+      expect(notifier.batches.map((batch) => batch.length).toList(), <int>[
+        2,
+        1,
+      ]);
+      expect(
+        notifier.announced.map((activity) => activity.entityType).toList(),
+        <SyncEntityType>[
+          SyncEntityType.expense,
+          SyncEntityType.loan,
+          SyncEntityType.period,
+        ],
+      );
+    });
   });
 }
