@@ -39,6 +39,10 @@ enum SyncEntityType {
   LOAN
 }
 
+enum DevicePlatform {
+  ANDROID
+}
+
 model Household {
   id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   slug               String              @unique @db.VarChar(64)
@@ -50,6 +54,7 @@ model Household {
   loanEntries        LoanEntry[]
   processedMutations ProcessedMutation[]
   expenseChanges     ExpenseChange[]
+  deviceTokens       DeviceToken[]
 }
 
 model Member {
@@ -63,6 +68,7 @@ model Member {
   disabledAt         DateTime?           @db.Timestamptz(3)
   household          Household           @relation(fields: [householdId], references: [id], onDelete: Restrict)
   refreshTokens      RefreshToken[]
+  deviceTokens       DeviceToken[]
   paidExpenses       Expense[]
   owedLoans          LoanEntry[]
   processedMutations ProcessedMutation[]
@@ -89,6 +95,38 @@ model RefreshToken {
   @@index([memberId])
   @@index([familyId])
   @@index([expiresAt])
+}
+
+/// One installed app that may be woken by a push message.
+///
+/// Rows are addresses, not credentials, which is the one place this model has to
+/// depart from `RefreshToken`: possession of an FCM registration token lets the
+/// holder send a message *to* the device, never act *as* the member, and the
+/// server has to present the value verbatim to Google, so it cannot be stored as
+/// a hash alone. `tokenHash` still carries the uniqueness and upsert key so the
+/// fixed-width index habit is preserved and re-registering an unchanged token is
+/// a no-op. The composite member relation makes "a device never names a member
+/// from another household" a database guarantee, because the send query trusts
+/// `householdId` to decide who gets woken.
+model DeviceToken {
+  id          String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  householdId String         @db.Uuid
+  memberId    String         @db.Uuid
+  platform    DevicePlatform @default(ANDROID)
+  tokenHash   String         @unique @db.Char(64)
+  /// The FCM registration token. Never logged: it is enough to send this device
+  /// a notification, so it stays out of every log line and error message.
+  token       String         @db.Text
+  createdAt   DateTime       @default(now()) @db.Timestamptz(3)
+  lastSeenAt  DateTime       @default(now()) @db.Timestamptz(3)
+  /// Set when Google reports the token as gone rather than deleting the row, so
+  /// a device that stopped receiving pushes is still visible while diagnosing.
+  disabledAt  DateTime?      @db.Timestamptz(3)
+  household   Household      @relation(fields: [householdId], references: [id], onDelete: Restrict)
+  member      Member         @relation(fields: [householdId, memberId], references: [householdId, id], onDelete: Cascade)
+
+  @@index([householdId, memberId])
+  @@index([memberId])
 }
 
 model SpendingPeriod {
