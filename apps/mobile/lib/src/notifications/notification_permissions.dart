@@ -14,10 +14,15 @@ abstract interface class NotificationPermissions {
   /// deserve the same honest treatment in the UI.
   Future<bool> areNotificationsEnabled();
 
-  /// Shows Android's runtime permission dialog and reports the outcome.
+  /// Shows Android's runtime permission dialog and reports what the member
+  /// answered, or null when no ask reached Android at all.
   ///
   /// Android only shows the dialog once per install; afterwards this resolves
   /// immediately with the standing answer, which is why the Settings screen
   /// offers instructions rather than an "ask again" button.
-  Future<bool> requestPermission();
+  ///
+  /// The third state is not decoration. Reporting a failed ask as a denial is
+  /// indistinguishable from the member saying no, and a caller that records it
+  /// as an answer spends the one chance to ask on a dialog nobody ever saw.
+  Future<bool?> requestPermission();
 }
