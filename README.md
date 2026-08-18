@@ -263,13 +263,23 @@ The mobile app now includes the fixed-member PIN login, a local SQLite dashboard
 scoped to the open spending period with totals and settlement, closing a period to
 open the next one, quick add/edit, filtered and searchable expense history,
 confirmed soft deletion, a manual lending ledger with its own net total,
-pending/offline/conflict feedback, and an account/settings screen. Dashboard,
+pending/offline/conflict feedback, Android notifications when a sync brings in the
+other member's activity, and an account/settings screen. Dashboard,
 lending, and search calculations use only active Drift rows and integer poisha.
 The dashboard has no date-range control; History keeps the optional range and
 filters. The Settings screen labels the API environment and explains that Android
 background sync is best effort, not immediate. See
 [apps/mobile/README.md](apps/mobile/README.md) for the screen and verification
 details.
+
+The app asks for the Android notification permission once, on the first open after
+installation, and works normally if it is denied. Announcements arrive with
+background sync, which runs every fifteen minutes at best: that is WorkManager's
+floor, not a promise, and Doze can stretch a real interval to hours on an idle
+phone. Opening the app or pulling to refresh syncs immediately. A device is never
+notified about its own entries, and a fresh installation is silent while it
+downloads existing history. Settings has a switch to stop the announcements
+without affecting sync.
 
 ## Production deployment and Android installation
 
@@ -302,8 +312,8 @@ Creating or modifying a live project remains an explicit operator action.
 - API inputs are strictly validated; ORM queries are household scoped; logs
   redact authorization, token, PIN, hash, and database URL fields.
 - This release has no registration, member management, hard delete, server
-  dashboard summary, server search, sub-taka amounts, public API key, iOS app, or
-  web administration.
+  dashboard summary, server search, sub-taka amounts, public API key, iOS app,
+  web administration, or FCM push delivery.
 
 Further guidance:
 
