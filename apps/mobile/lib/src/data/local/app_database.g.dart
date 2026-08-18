@@ -2807,6 +2807,32 @@ class $SyncMetadataTable extends SyncMetadata
         type: DriftSqlType.dateTime,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _notificationPermissionRequestedAtMeta =
+      const VerificationMeta('notificationPermissionRequestedAt');
+  @override
+  late final GeneratedColumn<DateTime> notificationPermissionRequestedAt =
+      GeneratedColumn<DateTime>(
+        'notification_permission_requested_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _householdActivityNotificationsEnabledMeta =
+      const VerificationMeta('householdActivityNotificationsEnabled');
+  @override
+  late final GeneratedColumn<bool> householdActivityNotificationsEnabled =
+      GeneratedColumn<bool>(
+        'household_activity_notifications_enabled',
+        aliasedName,
+        false,
+        type: DriftSqlType.bool,
+        requiredDuringInsert: false,
+        defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("household_activity_notifications_enabled" IN (0, 1))',
+        ),
+        defaultValue: const Constant<bool>(true),
+      );
   @override
   List<GeneratedColumn> get $columns => [
     singletonId,
@@ -2818,6 +2844,8 @@ class $SyncMetadataTable extends SyncMetadata
     bootstrapWatermark,
     updatedAt,
     lastSuccessfulSyncAt,
+    notificationPermissionRequestedAt,
+    householdActivityNotificationsEnabled,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2902,6 +2930,24 @@ class $SyncMetadataTable extends SyncMetadata
         ),
       );
     }
+    if (data.containsKey('notification_permission_requested_at')) {
+      context.handle(
+        _notificationPermissionRequestedAtMeta,
+        notificationPermissionRequestedAt.isAcceptableOrUnknown(
+          data['notification_permission_requested_at']!,
+          _notificationPermissionRequestedAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('household_activity_notifications_enabled')) {
+      context.handle(
+        _householdActivityNotificationsEnabledMeta,
+        householdActivityNotificationsEnabled.isAcceptableOrUnknown(
+          data['household_activity_notifications_enabled']!,
+          _householdActivityNotificationsEnabledMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -2947,6 +2993,14 @@ class $SyncMetadataTable extends SyncMetadata
         DriftSqlType.dateTime,
         data['${effectivePrefix}last_successful_sync_at'],
       ),
+      notificationPermissionRequestedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}notification_permission_requested_at'],
+      ),
+      householdActivityNotificationsEnabled: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}household_activity_notifications_enabled'],
+      )!,
     );
   }
 
@@ -2966,6 +3020,15 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
   final String? bootstrapWatermark;
   final DateTime updatedAt;
   final DateTime? lastSuccessfulSyncAt;
+
+  /// When Android's notification permission was last asked for, or null when it
+  /// never has been. Android shows its dialog only once per install, so this is
+  /// what keeps the first-launch request from being attempted on every launch.
+  final DateTime? notificationPermissionRequestedAt;
+
+  /// Whether the other member's activity is announced on this device. Defaults
+  /// to on: a member who granted the permission asked to be told.
+  final bool householdActivityNotificationsEnabled;
   const SyncMetadataRow({
     required this.singletonId,
     this.householdId,
@@ -2976,6 +3039,8 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     this.bootstrapWatermark,
     required this.updatedAt,
     this.lastSuccessfulSyncAt,
+    this.notificationPermissionRequestedAt,
+    required this.householdActivityNotificationsEnabled,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -3003,6 +3068,14 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     if (!nullToAbsent || lastSuccessfulSyncAt != null) {
       map['last_successful_sync_at'] = Variable<DateTime>(lastSuccessfulSyncAt);
     }
+    if (!nullToAbsent || notificationPermissionRequestedAt != null) {
+      map['notification_permission_requested_at'] = Variable<DateTime>(
+        notificationPermissionRequestedAt,
+      );
+    }
+    map['household_activity_notifications_enabled'] = Variable<bool>(
+      householdActivityNotificationsEnabled,
+    );
     return map;
   }
 
@@ -3031,6 +3104,13 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
       lastSuccessfulSyncAt: lastSuccessfulSyncAt == null && nullToAbsent
           ? const Value.absent()
           : Value(lastSuccessfulSyncAt),
+      notificationPermissionRequestedAt:
+          notificationPermissionRequestedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(notificationPermissionRequestedAt),
+      householdActivityNotificationsEnabled: Value(
+        householdActivityNotificationsEnabled,
+      ),
     );
   }
 
@@ -3055,6 +3135,12 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
       lastSuccessfulSyncAt: serializer.fromJson<DateTime?>(
         json['lastSuccessfulSyncAt'],
       ),
+      notificationPermissionRequestedAt: serializer.fromJson<DateTime?>(
+        json['notificationPermissionRequestedAt'],
+      ),
+      householdActivityNotificationsEnabled: serializer.fromJson<bool>(
+        json['householdActivityNotificationsEnabled'],
+      ),
     );
   }
   @override
@@ -3072,6 +3158,12 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
       'lastSuccessfulSyncAt': serializer.toJson<DateTime?>(
         lastSuccessfulSyncAt,
       ),
+      'notificationPermissionRequestedAt': serializer.toJson<DateTime?>(
+        notificationPermissionRequestedAt,
+      ),
+      'householdActivityNotificationsEnabled': serializer.toJson<bool>(
+        householdActivityNotificationsEnabled,
+      ),
     };
   }
 
@@ -3085,6 +3177,8 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     Value<String?> bootstrapWatermark = const Value.absent(),
     DateTime? updatedAt,
     Value<DateTime?> lastSuccessfulSyncAt = const Value.absent(),
+    Value<DateTime?> notificationPermissionRequestedAt = const Value.absent(),
+    bool? householdActivityNotificationsEnabled,
   }) => SyncMetadataRow(
     singletonId: singletonId ?? this.singletonId,
     householdId: householdId.present ? householdId.value : this.householdId,
@@ -3101,6 +3195,12 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     lastSuccessfulSyncAt: lastSuccessfulSyncAt.present
         ? lastSuccessfulSyncAt.value
         : this.lastSuccessfulSyncAt,
+    notificationPermissionRequestedAt: notificationPermissionRequestedAt.present
+        ? notificationPermissionRequestedAt.value
+        : this.notificationPermissionRequestedAt,
+    householdActivityNotificationsEnabled:
+        householdActivityNotificationsEnabled ??
+        this.householdActivityNotificationsEnabled,
   );
   SyncMetadataRow copyWithCompanion(SyncMetadataCompanion data) {
     return SyncMetadataRow(
@@ -3125,6 +3225,14 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
       lastSuccessfulSyncAt: data.lastSuccessfulSyncAt.present
           ? data.lastSuccessfulSyncAt.value
           : this.lastSuccessfulSyncAt,
+      notificationPermissionRequestedAt:
+          data.notificationPermissionRequestedAt.present
+          ? data.notificationPermissionRequestedAt.value
+          : this.notificationPermissionRequestedAt,
+      householdActivityNotificationsEnabled:
+          data.householdActivityNotificationsEnabled.present
+          ? data.householdActivityNotificationsEnabled.value
+          : this.householdActivityNotificationsEnabled,
     );
   }
 
@@ -3139,7 +3247,13 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
           ..write('bootstrapPageToken: $bootstrapPageToken, ')
           ..write('bootstrapWatermark: $bootstrapWatermark, ')
           ..write('updatedAt: $updatedAt, ')
-          ..write('lastSuccessfulSyncAt: $lastSuccessfulSyncAt')
+          ..write('lastSuccessfulSyncAt: $lastSuccessfulSyncAt, ')
+          ..write(
+            'notificationPermissionRequestedAt: $notificationPermissionRequestedAt, ',
+          )
+          ..write(
+            'householdActivityNotificationsEnabled: $householdActivityNotificationsEnabled',
+          )
           ..write(')'))
         .toString();
   }
@@ -3155,6 +3269,8 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     bootstrapWatermark,
     updatedAt,
     lastSuccessfulSyncAt,
+    notificationPermissionRequestedAt,
+    householdActivityNotificationsEnabled,
   );
   @override
   bool operator ==(Object other) =>
@@ -3168,7 +3284,11 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
           other.bootstrapPageToken == this.bootstrapPageToken &&
           other.bootstrapWatermark == this.bootstrapWatermark &&
           other.updatedAt == this.updatedAt &&
-          other.lastSuccessfulSyncAt == this.lastSuccessfulSyncAt);
+          other.lastSuccessfulSyncAt == this.lastSuccessfulSyncAt &&
+          other.notificationPermissionRequestedAt ==
+              this.notificationPermissionRequestedAt &&
+          other.householdActivityNotificationsEnabled ==
+              this.householdActivityNotificationsEnabled);
 }
 
 class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
@@ -3181,6 +3301,8 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
   final Value<String?> bootstrapWatermark;
   final Value<DateTime> updatedAt;
   final Value<DateTime?> lastSuccessfulSyncAt;
+  final Value<DateTime?> notificationPermissionRequestedAt;
+  final Value<bool> householdActivityNotificationsEnabled;
   const SyncMetadataCompanion({
     this.singletonId = const Value.absent(),
     this.householdId = const Value.absent(),
@@ -3191,6 +3313,8 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     this.bootstrapWatermark = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.lastSuccessfulSyncAt = const Value.absent(),
+    this.notificationPermissionRequestedAt = const Value.absent(),
+    this.householdActivityNotificationsEnabled = const Value.absent(),
   });
   SyncMetadataCompanion.insert({
     this.singletonId = const Value.absent(),
@@ -3202,6 +3326,8 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     this.bootstrapWatermark = const Value.absent(),
     required DateTime updatedAt,
     this.lastSuccessfulSyncAt = const Value.absent(),
+    this.notificationPermissionRequestedAt = const Value.absent(),
+    this.householdActivityNotificationsEnabled = const Value.absent(),
   }) : updatedAt = Value(updatedAt);
   static Insertable<SyncMetadataRow> custom({
     Expression<int>? singletonId,
@@ -3213,6 +3339,8 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     Expression<String>? bootstrapWatermark,
     Expression<DateTime>? updatedAt,
     Expression<DateTime>? lastSuccessfulSyncAt,
+    Expression<DateTime>? notificationPermissionRequestedAt,
+    Expression<bool>? householdActivityNotificationsEnabled,
   }) {
     return RawValuesInsertable({
       if (singletonId != null) 'singleton_id': singletonId,
@@ -3226,6 +3354,12 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
       if (updatedAt != null) 'updated_at': updatedAt,
       if (lastSuccessfulSyncAt != null)
         'last_successful_sync_at': lastSuccessfulSyncAt,
+      if (notificationPermissionRequestedAt != null)
+        'notification_permission_requested_at':
+            notificationPermissionRequestedAt,
+      if (householdActivityNotificationsEnabled != null)
+        'household_activity_notifications_enabled':
+            householdActivityNotificationsEnabled,
     });
   }
 
@@ -3239,6 +3373,8 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     Value<String?>? bootstrapWatermark,
     Value<DateTime>? updatedAt,
     Value<DateTime?>? lastSuccessfulSyncAt,
+    Value<DateTime?>? notificationPermissionRequestedAt,
+    Value<bool>? householdActivityNotificationsEnabled,
   }) {
     return SyncMetadataCompanion(
       singletonId: singletonId ?? this.singletonId,
@@ -3250,6 +3386,12 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
       bootstrapWatermark: bootstrapWatermark ?? this.bootstrapWatermark,
       updatedAt: updatedAt ?? this.updatedAt,
       lastSuccessfulSyncAt: lastSuccessfulSyncAt ?? this.lastSuccessfulSyncAt,
+      notificationPermissionRequestedAt:
+          notificationPermissionRequestedAt ??
+          this.notificationPermissionRequestedAt,
+      householdActivityNotificationsEnabled:
+          householdActivityNotificationsEnabled ??
+          this.householdActivityNotificationsEnabled,
     );
   }
 
@@ -3285,6 +3427,16 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
         lastSuccessfulSyncAt.value,
       );
     }
+    if (notificationPermissionRequestedAt.present) {
+      map['notification_permission_requested_at'] = Variable<DateTime>(
+        notificationPermissionRequestedAt.value,
+      );
+    }
+    if (householdActivityNotificationsEnabled.present) {
+      map['household_activity_notifications_enabled'] = Variable<bool>(
+        householdActivityNotificationsEnabled.value,
+      );
+    }
     return map;
   }
 
@@ -3299,7 +3451,13 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
           ..write('bootstrapPageToken: $bootstrapPageToken, ')
           ..write('bootstrapWatermark: $bootstrapWatermark, ')
           ..write('updatedAt: $updatedAt, ')
-          ..write('lastSuccessfulSyncAt: $lastSuccessfulSyncAt')
+          ..write('lastSuccessfulSyncAt: $lastSuccessfulSyncAt, ')
+          ..write(
+            'notificationPermissionRequestedAt: $notificationPermissionRequestedAt, ',
+          )
+          ..write(
+            'householdActivityNotificationsEnabled: $householdActivityNotificationsEnabled',
+          )
           ..write(')'))
         .toString();
   }
@@ -4627,6 +4785,8 @@ typedef $$SyncMetadataTableCreateCompanionBuilder =
       Value<String?> bootstrapWatermark,
       required DateTime updatedAt,
       Value<DateTime?> lastSuccessfulSyncAt,
+      Value<DateTime?> notificationPermissionRequestedAt,
+      Value<bool> householdActivityNotificationsEnabled,
     });
 typedef $$SyncMetadataTableUpdateCompanionBuilder =
     SyncMetadataCompanion Function({
@@ -4639,6 +4799,8 @@ typedef $$SyncMetadataTableUpdateCompanionBuilder =
       Value<String?> bootstrapWatermark,
       Value<DateTime> updatedAt,
       Value<DateTime?> lastSuccessfulSyncAt,
+      Value<DateTime?> notificationPermissionRequestedAt,
+      Value<bool> householdActivityNotificationsEnabled,
     });
 
 class $$SyncMetadataTableFilterComposer
@@ -4694,6 +4856,18 @@ class $$SyncMetadataTableFilterComposer
     column: $table.lastSuccessfulSyncAt,
     builder: (column) => ColumnFilters(column),
   );
+
+  ColumnFilters<DateTime> get notificationPermissionRequestedAt =>
+      $composableBuilder(
+        column: $table.notificationPermissionRequestedAt,
+        builder: (column) => ColumnFilters(column),
+      );
+
+  ColumnFilters<bool> get householdActivityNotificationsEnabled =>
+      $composableBuilder(
+        column: $table.householdActivityNotificationsEnabled,
+        builder: (column) => ColumnFilters(column),
+      );
 }
 
 class $$SyncMetadataTableOrderingComposer
@@ -4749,6 +4923,18 @@ class $$SyncMetadataTableOrderingComposer
     column: $table.lastSuccessfulSyncAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<DateTime> get notificationPermissionRequestedAt =>
+      $composableBuilder(
+        column: $table.notificationPermissionRequestedAt,
+        builder: (column) => ColumnOrderings(column),
+      );
+
+  ColumnOrderings<bool> get householdActivityNotificationsEnabled =>
+      $composableBuilder(
+        column: $table.householdActivityNotificationsEnabled,
+        builder: (column) => ColumnOrderings(column),
+      );
 }
 
 class $$SyncMetadataTableAnnotationComposer
@@ -4798,6 +4984,18 @@ class $$SyncMetadataTableAnnotationComposer
     column: $table.lastSuccessfulSyncAt,
     builder: (column) => column,
   );
+
+  GeneratedColumn<DateTime> get notificationPermissionRequestedAt =>
+      $composableBuilder(
+        column: $table.notificationPermissionRequestedAt,
+        builder: (column) => column,
+      );
+
+  GeneratedColumn<bool> get householdActivityNotificationsEnabled =>
+      $composableBuilder(
+        column: $table.householdActivityNotificationsEnabled,
+        builder: (column) => column,
+      );
 }
 
 class $$SyncMetadataTableTableManager
@@ -4840,6 +5038,10 @@ class $$SyncMetadataTableTableManager
                 Value<String?> bootstrapWatermark = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<DateTime?> lastSuccessfulSyncAt = const Value.absent(),
+                Value<DateTime?> notificationPermissionRequestedAt =
+                    const Value.absent(),
+                Value<bool> householdActivityNotificationsEnabled =
+                    const Value.absent(),
               }) => SyncMetadataCompanion(
                 singletonId: singletonId,
                 householdId: householdId,
@@ -4850,6 +5052,10 @@ class $$SyncMetadataTableTableManager
                 bootstrapWatermark: bootstrapWatermark,
                 updatedAt: updatedAt,
                 lastSuccessfulSyncAt: lastSuccessfulSyncAt,
+                notificationPermissionRequestedAt:
+                    notificationPermissionRequestedAt,
+                householdActivityNotificationsEnabled:
+                    householdActivityNotificationsEnabled,
               ),
           createCompanionCallback:
               ({
@@ -4862,6 +5068,10 @@ class $$SyncMetadataTableTableManager
                 Value<String?> bootstrapWatermark = const Value.absent(),
                 required DateTime updatedAt,
                 Value<DateTime?> lastSuccessfulSyncAt = const Value.absent(),
+                Value<DateTime?> notificationPermissionRequestedAt =
+                    const Value.absent(),
+                Value<bool> householdActivityNotificationsEnabled =
+                    const Value.absent(),
               }) => SyncMetadataCompanion.insert(
                 singletonId: singletonId,
                 householdId: householdId,
@@ -4872,6 +5082,10 @@ class $$SyncMetadataTableTableManager
                 bootstrapWatermark: bootstrapWatermark,
                 updatedAt: updatedAt,
                 lastSuccessfulSyncAt: lastSuccessfulSyncAt,
+                notificationPermissionRequestedAt:
+                    notificationPermissionRequestedAt,
+                householdActivityNotificationsEnabled:
+                    householdActivityNotificationsEnabled,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
