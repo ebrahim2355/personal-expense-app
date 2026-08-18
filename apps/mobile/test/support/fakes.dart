@@ -1,9 +1,13 @@
 import 'dart:async';
 
+import 'package:drift/drift.dart';
+import 'package:houseexpenses/src/data/local/app_database.dart';
 import 'package:houseexpenses/src/data/remote/api_client.dart';
 import 'package:houseexpenses/src/data/remote/api_models.dart';
 import 'package:houseexpenses/src/data/remote/http_transport.dart';
 import 'package:houseexpenses/src/domain/expense.dart';
+import 'package:houseexpenses/src/notifications/household_activity_notifier.dart';
+import 'package:houseexpenses/src/notifications/notification_permissions.dart';
 
 typedef PushHandler = Future<List<MutationResultDto>> Function(
   List<MutationCandidateDto> mutations,
@@ -99,6 +103,69 @@ final class FakeExpenseSyncApi implements ExpenseSyncApi {
     );
   }
 }
+
+/// Records what a coordinator announced, so a test can assert on the batching
+/// as well as on the contents.
+final class RecordingActivityNotifier implements HouseholdActivityNotifier {
+  /// One entry per [announce] call, which is one entry per synced page that had
+  /// anything to say.
+  final List<List<HouseholdActivity>> batches = <List<HouseholdActivity>>[];
+
+  List<HouseholdActivity> get announced =>
+      batches.expand((batch) => batch).toList(growable: false);
+
+  @override
+  Future<void> announce(List<HouseholdActivity> activities) async {
+    batches.add(List<HouseholdActivity>.unmodifiable(activities));
+  }
+}
+
+final class FakeNotificationPermissions implements NotificationPermissions {
+  FakeNotificationPermissions({this.enabled = true, this.grants = true});
+
+  /// What Android currently answers about this app's notifications.
+  bool enabled;
+
+  /// What the permission dialog would return. A denial leaves [enabled] false.
+  bool grants;
+  int requestCalls = 0;
+
+  @override
+  Future<bool> areNotificationsEnabled() async => enabled;
+
+  @override
+  Future<bool> requestPermission() async {
+    requestCalls += 1;
+    enabled = grants;
+    return grants;
+  }
+}
+
+/// Records who is signed in on this device, which is what lets the coordinator
+/// tell the other member's changes from its own echoing back, and optionally
+/// turns announcements off the way the Settings switch does.
+Future<void> recordDeviceMember(
+  AppDatabase database,
+  HouseholdMember member, {
+  bool announcementsEnabled = true,
+}) async {
+  // Ensures the singleton exists before updating it.
+  await database.readSyncMetadata();
+  await (database.update(
+    database.syncMetadata,
+  )..where((row) => row.singletonId.equals(1))).write(
+    SyncMetadataCompanion(
+      memberKey: Value<String>(member.wireName),
+      householdActivityNotificationsEnabled: Value<bool>(announcementsEnabled),
+      updatedAt: Value<DateTime>(DateTime.utc(2026, 8, 13, 12)),
+    ),
+  );
+}
+
+/// A snapshot whose payload is missing, so the first write against it throws.
+/// Stands in for any failure inside the transaction that applies a change page.
+EntitySnapshotDto malformedSnapshot() =>
+    const EntitySnapshotDto(entityType: SyncEntityType.expense);
 
 EntitySnapshotDto expenseSnapshot(ExpenseDto expense) =>
     EntitySnapshotDto(entityType: SyncEntityType.expense, expense: expense);
