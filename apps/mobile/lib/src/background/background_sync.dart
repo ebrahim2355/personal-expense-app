@@ -49,6 +49,12 @@ void backgroundSyncDispatcher() {
         return true;
       }
       final result = await coordinator.synchronize();
+      // Recorded for every outcome, including an offline one. Settings uses this
+      // to answer "is Android letting background delivery happen at all", and a
+      // run that found no network answers that just as well as one that synced.
+      // Written here rather than inside the coordinator so the coordinator stays
+      // ignorant of which isolate it is running in.
+      await database.recordBackgroundSync(DateTime.now().toUtc());
       return switch (result.outcome) {
         SyncOutcome.completed => true,
         SyncOutcome.authenticationRequired => true,
