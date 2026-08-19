@@ -2855,6 +2855,39 @@ class $SyncMetadataTable extends SyncMetadata
         type: DriftSqlType.dateTime,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _fcmTokenFingerprintMeta =
+      const VerificationMeta('fcmTokenFingerprint');
+  @override
+  late final GeneratedColumn<String> fcmTokenFingerprint =
+      GeneratedColumn<String>(
+        'fcm_token_fingerprint',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _fcmTokenRegisteredAtMeta =
+      const VerificationMeta('fcmTokenRegisteredAt');
+  @override
+  late final GeneratedColumn<DateTime> fcmTokenRegisteredAt =
+      GeneratedColumn<DateTime>(
+        'fcm_token_registered_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _lastPushReceivedAtMeta =
+      const VerificationMeta('lastPushReceivedAt');
+  @override
+  late final GeneratedColumn<DateTime> lastPushReceivedAt =
+      GeneratedColumn<DateTime>(
+        'last_push_received_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.dateTime,
+        requiredDuringInsert: false,
+      );
   @override
   List<GeneratedColumn> get $columns => [
     singletonId,
@@ -2870,6 +2903,9 @@ class $SyncMetadataTable extends SyncMetadata
     householdActivityNotificationsEnabled,
     batteryExemptionRequestedAt,
     lastBackgroundSyncAt,
+    fcmTokenFingerprint,
+    fcmTokenRegisteredAt,
+    lastPushReceivedAt,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2990,6 +3026,33 @@ class $SyncMetadataTable extends SyncMetadata
         ),
       );
     }
+    if (data.containsKey('fcm_token_fingerprint')) {
+      context.handle(
+        _fcmTokenFingerprintMeta,
+        fcmTokenFingerprint.isAcceptableOrUnknown(
+          data['fcm_token_fingerprint']!,
+          _fcmTokenFingerprintMeta,
+        ),
+      );
+    }
+    if (data.containsKey('fcm_token_registered_at')) {
+      context.handle(
+        _fcmTokenRegisteredAtMeta,
+        fcmTokenRegisteredAt.isAcceptableOrUnknown(
+          data['fcm_token_registered_at']!,
+          _fcmTokenRegisteredAtMeta,
+        ),
+      );
+    }
+    if (data.containsKey('last_push_received_at')) {
+      context.handle(
+        _lastPushReceivedAtMeta,
+        lastPushReceivedAt.isAcceptableOrUnknown(
+          data['last_push_received_at']!,
+          _lastPushReceivedAtMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -3051,6 +3114,18 @@ class $SyncMetadataTable extends SyncMetadata
         DriftSqlType.dateTime,
         data['${effectivePrefix}last_background_sync_at'],
       ),
+      fcmTokenFingerprint: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}fcm_token_fingerprint'],
+      ),
+      fcmTokenRegisteredAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}fcm_token_registered_at'],
+      ),
+      lastPushReceivedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}last_push_received_at'],
+      ),
     );
   }
 
@@ -3091,6 +3166,29 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
   /// sync also moves: this one answers "is the OS letting background delivery
   /// happen at all", which is otherwise invisible from inside the app.
   final DateTime? lastBackgroundSyncAt;
+
+  /// The SHA-256 of the FCM registration token this device last successfully
+  /// registered with the API, or null when it has registered none.
+  ///
+  /// A digest rather than the token so the plain local database never holds a
+  /// value that could be used to send this phone a message. It exists to answer
+  /// one question — has the token changed since the server was last told? —
+  /// because the client cannot otherwise tell a token the server already has
+  /// from one whose registration never arrived.
+  final String? fcmTokenFingerprint;
+
+  /// When [fcmTokenFingerprint] was accepted by the API. Null while a
+  /// registration is still owed, which is what makes a failed attempt retry on
+  /// the next launch instead of being mistaken for a completed one.
+  final DateTime? fcmTokenRegisteredAt;
+
+  /// When a push last woke this device, or null when none ever has.
+  ///
+  /// The diagnostic that separates a working push from a well-timed poll: it is
+  /// written only by the two push paths, never by the scheduled worker, so
+  /// "never received on this device" is an honest answer rather than an absence
+  /// of evidence.
+  final DateTime? lastPushReceivedAt;
   const SyncMetadataRow({
     required this.singletonId,
     this.householdId,
@@ -3105,6 +3203,9 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     required this.householdActivityNotificationsEnabled,
     this.batteryExemptionRequestedAt,
     this.lastBackgroundSyncAt,
+    this.fcmTokenFingerprint,
+    this.fcmTokenRegisteredAt,
+    this.lastPushReceivedAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -3148,6 +3249,15 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     if (!nullToAbsent || lastBackgroundSyncAt != null) {
       map['last_background_sync_at'] = Variable<DateTime>(lastBackgroundSyncAt);
     }
+    if (!nullToAbsent || fcmTokenFingerprint != null) {
+      map['fcm_token_fingerprint'] = Variable<String>(fcmTokenFingerprint);
+    }
+    if (!nullToAbsent || fcmTokenRegisteredAt != null) {
+      map['fcm_token_registered_at'] = Variable<DateTime>(fcmTokenRegisteredAt);
+    }
+    if (!nullToAbsent || lastPushReceivedAt != null) {
+      map['last_push_received_at'] = Variable<DateTime>(lastPushReceivedAt);
+    }
     return map;
   }
 
@@ -3190,6 +3300,15 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
       lastBackgroundSyncAt: lastBackgroundSyncAt == null && nullToAbsent
           ? const Value.absent()
           : Value(lastBackgroundSyncAt),
+      fcmTokenFingerprint: fcmTokenFingerprint == null && nullToAbsent
+          ? const Value.absent()
+          : Value(fcmTokenFingerprint),
+      fcmTokenRegisteredAt: fcmTokenRegisteredAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(fcmTokenRegisteredAt),
+      lastPushReceivedAt: lastPushReceivedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastPushReceivedAt),
     );
   }
 
@@ -3226,6 +3345,15 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
       lastBackgroundSyncAt: serializer.fromJson<DateTime?>(
         json['lastBackgroundSyncAt'],
       ),
+      fcmTokenFingerprint: serializer.fromJson<String?>(
+        json['fcmTokenFingerprint'],
+      ),
+      fcmTokenRegisteredAt: serializer.fromJson<DateTime?>(
+        json['fcmTokenRegisteredAt'],
+      ),
+      lastPushReceivedAt: serializer.fromJson<DateTime?>(
+        json['lastPushReceivedAt'],
+      ),
     );
   }
   @override
@@ -3255,6 +3383,11 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
       'lastBackgroundSyncAt': serializer.toJson<DateTime?>(
         lastBackgroundSyncAt,
       ),
+      'fcmTokenFingerprint': serializer.toJson<String?>(fcmTokenFingerprint),
+      'fcmTokenRegisteredAt': serializer.toJson<DateTime?>(
+        fcmTokenRegisteredAt,
+      ),
+      'lastPushReceivedAt': serializer.toJson<DateTime?>(lastPushReceivedAt),
     };
   }
 
@@ -3272,6 +3405,9 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     bool? householdActivityNotificationsEnabled,
     Value<DateTime?> batteryExemptionRequestedAt = const Value.absent(),
     Value<DateTime?> lastBackgroundSyncAt = const Value.absent(),
+    Value<String?> fcmTokenFingerprint = const Value.absent(),
+    Value<DateTime?> fcmTokenRegisteredAt = const Value.absent(),
+    Value<DateTime?> lastPushReceivedAt = const Value.absent(),
   }) => SyncMetadataRow(
     singletonId: singletonId ?? this.singletonId,
     householdId: householdId.present ? householdId.value : this.householdId,
@@ -3300,6 +3436,15 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     lastBackgroundSyncAt: lastBackgroundSyncAt.present
         ? lastBackgroundSyncAt.value
         : this.lastBackgroundSyncAt,
+    fcmTokenFingerprint: fcmTokenFingerprint.present
+        ? fcmTokenFingerprint.value
+        : this.fcmTokenFingerprint,
+    fcmTokenRegisteredAt: fcmTokenRegisteredAt.present
+        ? fcmTokenRegisteredAt.value
+        : this.fcmTokenRegisteredAt,
+    lastPushReceivedAt: lastPushReceivedAt.present
+        ? lastPushReceivedAt.value
+        : this.lastPushReceivedAt,
   );
   SyncMetadataRow copyWithCompanion(SyncMetadataCompanion data) {
     return SyncMetadataRow(
@@ -3338,6 +3483,15 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
       lastBackgroundSyncAt: data.lastBackgroundSyncAt.present
           ? data.lastBackgroundSyncAt.value
           : this.lastBackgroundSyncAt,
+      fcmTokenFingerprint: data.fcmTokenFingerprint.present
+          ? data.fcmTokenFingerprint.value
+          : this.fcmTokenFingerprint,
+      fcmTokenRegisteredAt: data.fcmTokenRegisteredAt.present
+          ? data.fcmTokenRegisteredAt.value
+          : this.fcmTokenRegisteredAt,
+      lastPushReceivedAt: data.lastPushReceivedAt.present
+          ? data.lastPushReceivedAt.value
+          : this.lastPushReceivedAt,
     );
   }
 
@@ -3360,7 +3514,10 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
             'householdActivityNotificationsEnabled: $householdActivityNotificationsEnabled, ',
           )
           ..write('batteryExemptionRequestedAt: $batteryExemptionRequestedAt, ')
-          ..write('lastBackgroundSyncAt: $lastBackgroundSyncAt')
+          ..write('lastBackgroundSyncAt: $lastBackgroundSyncAt, ')
+          ..write('fcmTokenFingerprint: $fcmTokenFingerprint, ')
+          ..write('fcmTokenRegisteredAt: $fcmTokenRegisteredAt, ')
+          ..write('lastPushReceivedAt: $lastPushReceivedAt')
           ..write(')'))
         .toString();
   }
@@ -3380,6 +3537,9 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
     householdActivityNotificationsEnabled,
     batteryExemptionRequestedAt,
     lastBackgroundSyncAt,
+    fcmTokenFingerprint,
+    fcmTokenRegisteredAt,
+    lastPushReceivedAt,
   );
   @override
   bool operator ==(Object other) =>
@@ -3400,7 +3560,10 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
               this.householdActivityNotificationsEnabled &&
           other.batteryExemptionRequestedAt ==
               this.batteryExemptionRequestedAt &&
-          other.lastBackgroundSyncAt == this.lastBackgroundSyncAt);
+          other.lastBackgroundSyncAt == this.lastBackgroundSyncAt &&
+          other.fcmTokenFingerprint == this.fcmTokenFingerprint &&
+          other.fcmTokenRegisteredAt == this.fcmTokenRegisteredAt &&
+          other.lastPushReceivedAt == this.lastPushReceivedAt);
 }
 
 class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
@@ -3417,6 +3580,9 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
   final Value<bool> householdActivityNotificationsEnabled;
   final Value<DateTime?> batteryExemptionRequestedAt;
   final Value<DateTime?> lastBackgroundSyncAt;
+  final Value<String?> fcmTokenFingerprint;
+  final Value<DateTime?> fcmTokenRegisteredAt;
+  final Value<DateTime?> lastPushReceivedAt;
   const SyncMetadataCompanion({
     this.singletonId = const Value.absent(),
     this.householdId = const Value.absent(),
@@ -3431,6 +3597,9 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     this.householdActivityNotificationsEnabled = const Value.absent(),
     this.batteryExemptionRequestedAt = const Value.absent(),
     this.lastBackgroundSyncAt = const Value.absent(),
+    this.fcmTokenFingerprint = const Value.absent(),
+    this.fcmTokenRegisteredAt = const Value.absent(),
+    this.lastPushReceivedAt = const Value.absent(),
   });
   SyncMetadataCompanion.insert({
     this.singletonId = const Value.absent(),
@@ -3446,6 +3615,9 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     this.householdActivityNotificationsEnabled = const Value.absent(),
     this.batteryExemptionRequestedAt = const Value.absent(),
     this.lastBackgroundSyncAt = const Value.absent(),
+    this.fcmTokenFingerprint = const Value.absent(),
+    this.fcmTokenRegisteredAt = const Value.absent(),
+    this.lastPushReceivedAt = const Value.absent(),
   }) : updatedAt = Value(updatedAt);
   static Insertable<SyncMetadataRow> custom({
     Expression<int>? singletonId,
@@ -3461,6 +3633,9 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     Expression<bool>? householdActivityNotificationsEnabled,
     Expression<DateTime>? batteryExemptionRequestedAt,
     Expression<DateTime>? lastBackgroundSyncAt,
+    Expression<String>? fcmTokenFingerprint,
+    Expression<DateTime>? fcmTokenRegisteredAt,
+    Expression<DateTime>? lastPushReceivedAt,
   }) {
     return RawValuesInsertable({
       if (singletonId != null) 'singleton_id': singletonId,
@@ -3484,6 +3659,12 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
         'battery_exemption_requested_at': batteryExemptionRequestedAt,
       if (lastBackgroundSyncAt != null)
         'last_background_sync_at': lastBackgroundSyncAt,
+      if (fcmTokenFingerprint != null)
+        'fcm_token_fingerprint': fcmTokenFingerprint,
+      if (fcmTokenRegisteredAt != null)
+        'fcm_token_registered_at': fcmTokenRegisteredAt,
+      if (lastPushReceivedAt != null)
+        'last_push_received_at': lastPushReceivedAt,
     });
   }
 
@@ -3501,6 +3682,9 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
     Value<bool>? householdActivityNotificationsEnabled,
     Value<DateTime?>? batteryExemptionRequestedAt,
     Value<DateTime?>? lastBackgroundSyncAt,
+    Value<String?>? fcmTokenFingerprint,
+    Value<DateTime?>? fcmTokenRegisteredAt,
+    Value<DateTime?>? lastPushReceivedAt,
   }) {
     return SyncMetadataCompanion(
       singletonId: singletonId ?? this.singletonId,
@@ -3521,6 +3705,9 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
       batteryExemptionRequestedAt:
           batteryExemptionRequestedAt ?? this.batteryExemptionRequestedAt,
       lastBackgroundSyncAt: lastBackgroundSyncAt ?? this.lastBackgroundSyncAt,
+      fcmTokenFingerprint: fcmTokenFingerprint ?? this.fcmTokenFingerprint,
+      fcmTokenRegisteredAt: fcmTokenRegisteredAt ?? this.fcmTokenRegisteredAt,
+      lastPushReceivedAt: lastPushReceivedAt ?? this.lastPushReceivedAt,
     );
   }
 
@@ -3576,6 +3763,21 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
         lastBackgroundSyncAt.value,
       );
     }
+    if (fcmTokenFingerprint.present) {
+      map['fcm_token_fingerprint'] = Variable<String>(
+        fcmTokenFingerprint.value,
+      );
+    }
+    if (fcmTokenRegisteredAt.present) {
+      map['fcm_token_registered_at'] = Variable<DateTime>(
+        fcmTokenRegisteredAt.value,
+      );
+    }
+    if (lastPushReceivedAt.present) {
+      map['last_push_received_at'] = Variable<DateTime>(
+        lastPushReceivedAt.value,
+      );
+    }
     return map;
   }
 
@@ -3598,7 +3800,10 @@ class SyncMetadataCompanion extends UpdateCompanion<SyncMetadataRow> {
             'householdActivityNotificationsEnabled: $householdActivityNotificationsEnabled, ',
           )
           ..write('batteryExemptionRequestedAt: $batteryExemptionRequestedAt, ')
-          ..write('lastBackgroundSyncAt: $lastBackgroundSyncAt')
+          ..write('lastBackgroundSyncAt: $lastBackgroundSyncAt, ')
+          ..write('fcmTokenFingerprint: $fcmTokenFingerprint, ')
+          ..write('fcmTokenRegisteredAt: $fcmTokenRegisteredAt, ')
+          ..write('lastPushReceivedAt: $lastPushReceivedAt')
           ..write(')'))
         .toString();
   }
@@ -4930,6 +5135,9 @@ typedef $$SyncMetadataTableCreateCompanionBuilder =
       Value<bool> householdActivityNotificationsEnabled,
       Value<DateTime?> batteryExemptionRequestedAt,
       Value<DateTime?> lastBackgroundSyncAt,
+      Value<String?> fcmTokenFingerprint,
+      Value<DateTime?> fcmTokenRegisteredAt,
+      Value<DateTime?> lastPushReceivedAt,
     });
 typedef $$SyncMetadataTableUpdateCompanionBuilder =
     SyncMetadataCompanion Function({
@@ -4946,6 +5154,9 @@ typedef $$SyncMetadataTableUpdateCompanionBuilder =
       Value<bool> householdActivityNotificationsEnabled,
       Value<DateTime?> batteryExemptionRequestedAt,
       Value<DateTime?> lastBackgroundSyncAt,
+      Value<String?> fcmTokenFingerprint,
+      Value<DateTime?> fcmTokenRegisteredAt,
+      Value<DateTime?> lastPushReceivedAt,
     });
 
 class $$SyncMetadataTableFilterComposer
@@ -5021,6 +5232,21 @@ class $$SyncMetadataTableFilterComposer
 
   ColumnFilters<DateTime> get lastBackgroundSyncAt => $composableBuilder(
     column: $table.lastBackgroundSyncAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get fcmTokenFingerprint => $composableBuilder(
+    column: $table.fcmTokenFingerprint,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get fcmTokenRegisteredAt => $composableBuilder(
+    column: $table.fcmTokenRegisteredAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get lastPushReceivedAt => $composableBuilder(
+    column: $table.lastPushReceivedAt,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -5101,6 +5327,21 @@ class $$SyncMetadataTableOrderingComposer
     column: $table.lastBackgroundSyncAt,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get fcmTokenFingerprint => $composableBuilder(
+    column: $table.fcmTokenFingerprint,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get fcmTokenRegisteredAt => $composableBuilder(
+    column: $table.fcmTokenRegisteredAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get lastPushReceivedAt => $composableBuilder(
+    column: $table.lastPushReceivedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$SyncMetadataTableAnnotationComposer
@@ -5173,6 +5414,21 @@ class $$SyncMetadataTableAnnotationComposer
     column: $table.lastBackgroundSyncAt,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get fcmTokenFingerprint => $composableBuilder(
+    column: $table.fcmTokenFingerprint,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get fcmTokenRegisteredAt => $composableBuilder(
+    column: $table.fcmTokenRegisteredAt,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<DateTime> get lastPushReceivedAt => $composableBuilder(
+    column: $table.lastPushReceivedAt,
+    builder: (column) => column,
+  );
 }
 
 class $$SyncMetadataTableTableManager
@@ -5222,6 +5478,9 @@ class $$SyncMetadataTableTableManager
                 Value<DateTime?> batteryExemptionRequestedAt =
                     const Value.absent(),
                 Value<DateTime?> lastBackgroundSyncAt = const Value.absent(),
+                Value<String?> fcmTokenFingerprint = const Value.absent(),
+                Value<DateTime?> fcmTokenRegisteredAt = const Value.absent(),
+                Value<DateTime?> lastPushReceivedAt = const Value.absent(),
               }) => SyncMetadataCompanion(
                 singletonId: singletonId,
                 householdId: householdId,
@@ -5238,6 +5497,9 @@ class $$SyncMetadataTableTableManager
                     householdActivityNotificationsEnabled,
                 batteryExemptionRequestedAt: batteryExemptionRequestedAt,
                 lastBackgroundSyncAt: lastBackgroundSyncAt,
+                fcmTokenFingerprint: fcmTokenFingerprint,
+                fcmTokenRegisteredAt: fcmTokenRegisteredAt,
+                lastPushReceivedAt: lastPushReceivedAt,
               ),
           createCompanionCallback:
               ({
@@ -5257,6 +5519,9 @@ class $$SyncMetadataTableTableManager
                 Value<DateTime?> batteryExemptionRequestedAt =
                     const Value.absent(),
                 Value<DateTime?> lastBackgroundSyncAt = const Value.absent(),
+                Value<String?> fcmTokenFingerprint = const Value.absent(),
+                Value<DateTime?> fcmTokenRegisteredAt = const Value.absent(),
+                Value<DateTime?> lastPushReceivedAt = const Value.absent(),
               }) => SyncMetadataCompanion.insert(
                 singletonId: singletonId,
                 householdId: householdId,
@@ -5273,6 +5538,9 @@ class $$SyncMetadataTableTableManager
                     householdActivityNotificationsEnabled,
                 batteryExemptionRequestedAt: batteryExemptionRequestedAt,
                 lastBackgroundSyncAt: lastBackgroundSyncAt,
+                fcmTokenFingerprint: fcmTokenFingerprint,
+                fcmTokenRegisteredAt: fcmTokenRegisteredAt,
+                lastPushReceivedAt: lastPushReceivedAt,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

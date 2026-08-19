@@ -115,6 +115,29 @@ class SyncMetadata extends Table {
   /// happen at all", which is otherwise invisible from inside the app.
   DateTimeColumn get lastBackgroundSyncAt => dateTime().nullable()();
 
+  /// The SHA-256 of the FCM registration token this device last successfully
+  /// registered with the API, or null when it has registered none.
+  ///
+  /// A digest rather than the token so the plain local database never holds a
+  /// value that could be used to send this phone a message. It exists to answer
+  /// one question — has the token changed since the server was last told? —
+  /// because the client cannot otherwise tell a token the server already has
+  /// from one whose registration never arrived.
+  TextColumn get fcmTokenFingerprint => text().nullable()();
+
+  /// When [fcmTokenFingerprint] was accepted by the API. Null while a
+  /// registration is still owed, which is what makes a failed attempt retry on
+  /// the next launch instead of being mistaken for a completed one.
+  DateTimeColumn get fcmTokenRegisteredAt => dateTime().nullable()();
+
+  /// When a push last woke this device, or null when none ever has.
+  ///
+  /// The diagnostic that separates a working push from a well-timed poll: it is
+  /// written only by the two push paths, never by the scheduled worker, so
+  /// "never received on this device" is an honest answer rather than an absence
+  /// of evidence.
+  DateTimeColumn get lastPushReceivedAt => dateTime().nullable()();
+
   @override
   Set<Column<Object>> get primaryKey => <Column<Object>>{singletonId};
 }
@@ -140,7 +163,7 @@ final class AppDatabase extends _$AppDatabase {
       );
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -200,8 +223,23 @@ final class AppDatabase extends _$AppDatabase {
           syncMetadata.lastBackgroundSyncAt,
         );
       }
+      if (from < 6 && to >= 6) {
+        // Push arrives. All three start null on an upgrading device, and null is
+        // the truthful value in each case: nothing has been registered with the
+        // API yet, so the next launch registers, and no push has been received
+        // because this build is the first that can receive one.
+        await migrator.addColumn(
+          syncMetadata,
+          syncMetadata.fcmTokenFingerprint,
+        );
+        await migrator.addColumn(
+          syncMetadata,
+          syncMetadata.fcmTokenRegisteredAt,
+        );
+        await migrator.addColumn(syncMetadata, syncMetadata.lastPushReceivedAt);
+      }
       // Every future schema version must add an explicit, tested migration.
-      if (to > 5) {
+      if (to > 6) {
         throw StateError('Missing database migration from $from to $to.');
       }
     },
@@ -351,6 +389,49 @@ final class AppDatabase extends _$AppDatabase {
       syncMetadata,
     )..where((row) => row.singletonId.equals(1))).write(
       SyncMetadataCompanion(lastBackgroundSyncAt: Value<DateTime>(at)),
+    );
+  }
+
+  /// Records that a push woke this device, from whichever isolate received it.
+  ///
+  /// Deliberately separate from [recordBackgroundSync]: that column answers
+  /// whether Android runs the scheduled worker, and a push arriving says nothing
+  /// about it. Writing both from here would let a healthy push report background
+  /// polling as working when it is not.
+  Future<void> recordPushReceived(DateTime at) async {
+    // Ensures the singleton exists before updating it.
+    await readSyncMetadata();
+    await (update(syncMetadata)..where((row) => row.singletonId.equals(1)))
+        .write(SyncMetadataCompanion(lastPushReceivedAt: Value<DateTime>(at)));
+  }
+
+  /// Records the token the API has accepted, so the next launch can tell an
+  /// already registered token from one whose registration never landed.
+  Future<void> recordDeviceRegistration({
+    required String fingerprint,
+    required DateTime at,
+  }) async {
+    await readSyncMetadata();
+    await (update(
+      syncMetadata,
+    )..where((row) => row.singletonId.equals(1))).write(
+      SyncMetadataCompanion(
+        fcmTokenFingerprint: Value<String>(fingerprint),
+        fcmTokenRegisteredAt: Value<DateTime>(at),
+      ),
+    );
+  }
+
+  /// Forgets the registration, so the next sign-in registers again from scratch.
+  Future<void> clearDeviceRegistration() async {
+    await readSyncMetadata();
+    await (update(
+      syncMetadata,
+    )..where((row) => row.singletonId.equals(1))).write(
+      const SyncMetadataCompanion(
+        fcmTokenFingerprint: Value<String?>(null),
+        fcmTokenRegisteredAt: Value<DateTime?>(null),
+      ),
     );
   }
 
