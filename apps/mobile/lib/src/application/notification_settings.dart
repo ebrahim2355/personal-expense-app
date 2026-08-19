@@ -155,6 +155,15 @@ final class NotificationSettingsController {
   Stream<DateTime?> watchLastBackgroundSync() =>
       _database.watchSyncMetadata().map((row) => row.lastBackgroundSyncAt);
 
+  /// When a push last woke this device, or null when none ever has.
+  ///
+  /// The one honest answer to "does push actually work on this phone". Separate
+  /// from [watchLastBackgroundSync] because a poll that happens to land seconds
+  /// after a change is indistinguishable from a push unless the two are counted
+  /// apart.
+  Stream<DateTime?> watchLastPushReceived() =>
+      _database.watchSyncMetadata().map((row) => row.lastPushReceivedAt);
+
   /// Re-reads Android's answer, for the button offered after a denial. Android
   /// will not re-show its dialog, so re-checking is the only truthful action
   /// available once a member has been to Android Settings and back.
