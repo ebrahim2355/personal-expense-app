@@ -324,3 +324,49 @@ final class DioAuthenticationApi implements AuthenticationApi {
     }
   }
 }
+
+/// Tells the API which device to wake when the other member changes something.
+abstract interface class DeviceRegistrationApi {
+  /// Claims this device's push token for the signed-in member.
+  ///
+  /// Idempotent by token: the server upserts, so a repeat registration is a
+  /// no-op, and a token that moved to the other member follows whoever signed in
+  /// last.
+  Future<void> register(String token);
+
+  /// Gives the token up, so a signed-out phone stops being woken.
+  Future<void> unregister(String token);
+}
+
+final class DioDeviceRegistrationApi implements DeviceRegistrationApi {
+  const DioDeviceRegistrationApi(this._client);
+
+  final AuthenticatedApiClient _client;
+
+  @override
+  Future<void> register(String token) => _send('/v1/devices', <String, Object?>{
+    'token': token,
+    // The only platform the API accepts. Sent explicitly rather than defaulted
+    // server-side so the day iOS exists, an old build cannot be mistaken for it.
+    'platform': 'ANDROID',
+  });
+
+  @override
+  Future<void> unregister(String token) =>
+      _send('/v1/devices/unregister', <String, Object?>{'token': token});
+
+  Future<void> _send(String path, Map<String, Object?> data) async {
+    final response = await _client.send(
+      TransportRequest(method: 'POST', path: path, data: data),
+    );
+    if (response.statusCode == 204) {
+      return;
+    }
+    // Thrown rather than swallowed here. The caller is what decides that a
+    // failed registration is survivable, and it needs to know the attempt failed
+    // so it can leave the local timestamp null and retry on the next launch.
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw apiExceptionFrom(response);
+    }
+  }
+}
