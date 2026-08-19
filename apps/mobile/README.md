@@ -77,13 +77,17 @@ file:
 
 ```text
 Execution failed for task ':app:processDebugGoogleServices'.
-> File google-services.json is missing. The Google Services Plugin cannot
-  function without it.
-     Searched Location: ...
+> File google-services.json is missing.
+  The Google Services Plugin cannot function without it.
+  Searched locations: ...\app\src\debug\google-services.json, ...,
+  ...\app\google-services.json
 ```
 
-That is the missing file and nothing else — the plugin, the AGP version, and the
-classpath entry are all fine. Tests, `flutter analyze`, and the API need nothing
+That is the missing file and nothing else. Reaching that task is itself the proof:
+the plugin resolved, configured against this AGP and Kotlin version, and wired
+itself into the variant — a wrong plugin version fails earlier, during
+configuration, and names the plugin rather than the file. The last searched
+location is the one to fill. Tests, `flutter analyze`, and the API need nothing
 from it; only the Android build and an actual push do.
 
 ## Generate and verify
