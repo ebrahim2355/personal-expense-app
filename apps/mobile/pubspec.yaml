@@ -1,7 +1,7 @@
 name: houseexpenses
 description: Household Expenses Android application shell.
 publish_to: 'none'
-version: 1.1.0+7
+version: 1.1.1+8
 
 environment:
   sdk: ^3.13.0
