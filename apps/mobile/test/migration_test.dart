@@ -7,6 +7,7 @@ import 'generated/schema.dart';
 import 'generated/schema_v2.dart' as v2;
 import 'generated/schema_v3.dart' as v3;
 import 'generated/schema_v4.dart' as v4;
+import 'generated/schema_v5.dart' as v5;
 
 /// Drift generates the historical schemas as bare `TableInfo`s with no data
 /// classes, so fixtures are inserted column by column.
@@ -189,4 +190,52 @@ void main() {
       expect(metadata.lastBackgroundSyncAt, isNull);
     },
   );
+
+  test('migrates from v5 to v6', () async {
+    final connection = await verifier.startAt(5);
+    final database = AppDatabase(connection);
+    addTearDown(database.close);
+
+    await verifier.migrateAndValidate(database, 6);
+  });
+
+  test('leaves an upgraded device unregistered and never pushed to', () async {
+    final schema = await verifier.schemaAt(5);
+    final oldDatabase = v5.DatabaseAtV5(schema.newConnection());
+    final recordedAt = DateTime.utc(2026, 8, 18, 17);
+    await oldDatabase
+        .into(oldDatabase.syncMetadata)
+        .insert(
+          rawRow(<String, Expression<Object>>{
+            'singleton_id': const Variable<int>(1),
+            'member_key': const Variable<String>('EBRAHIM'),
+            'last_cursor': const Variable<String>('cursor-13'),
+            'updated_at': Variable<DateTime>(recordedAt),
+            'notification_permission_requested_at': Variable<DateTime>(
+              recordedAt,
+            ),
+            'battery_exemption_requested_at': Variable<DateTime>(recordedAt),
+            'last_background_sync_at': Variable<DateTime>(recordedAt),
+          }),
+        );
+    await oldDatabase.close();
+
+    final database = AppDatabase(schema.newConnection());
+    addTearDown(database.close);
+    await verifier.migrateAndValidate(database, 6);
+
+    final metadata = await database.readSyncMetadata();
+    // The evidence the device had already gathered about background delivery
+    // survives: push is added alongside polling, not in place of it.
+    expect(metadata.memberKey, 'EBRAHIM');
+    expect(metadata.lastCursor, 'cursor-13');
+    expect(metadata.batteryExemptionRequestedAt?.toUtc(), recordedAt);
+    expect(metadata.lastBackgroundSyncAt?.toUtc(), recordedAt);
+    // All three start null, and each is truthful: this install has registered no
+    // token with the API, so the next launch registers, and it has received no
+    // push because this is the first build that can.
+    expect(metadata.fcmTokenFingerprint, isNull);
+    expect(metadata.fcmTokenRegisteredAt, isNull);
+    expect(metadata.lastPushReceivedAt, isNull);
+  });
 }
