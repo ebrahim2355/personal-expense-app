@@ -914,6 +914,31 @@ void main() {
       await disposeTree(tester);
     });
 
+    testWidgets('says whether a push has ever woken this device', (
+      tester,
+    ) async {
+      await pumpSettings(tester);
+
+      // Scoped to the tile: the background-delivery line above it is still
+      // reading its own answer and says "Checking…" too.
+      expect(_pushWakeDetail(tester), 'Checking…');
+
+      await tester.pumpAndSettle();
+      expect(_pushWakeDetail(tester), 'Never received on this device.');
+
+      await database.recordPushReceived(DateTime.utc(2026, 8, 18, 5, 30));
+      await tester.pumpAndSettle();
+
+      // A fresh timestamp here is the only thing that separates a working push
+      // from a well-timed poll, so it is reported to the minute, in Dhaka time.
+      expect(
+        _pushWakeDetail(tester),
+        'Last received August 18, 2026 · 11:30 AM.',
+      );
+
+      await disposeTree(tester);
+    });
+
     testWidgets('warns when Android is throttling background work', (
       tester,
     ) async {
@@ -978,6 +1003,19 @@ String? _appBarTitle(WidgetTester tester) => tester
 /// its value and whether it currently accepts a tap.
 SwitchListTile _activitySwitch(WidgetTester tester) => tester
     .widget<SwitchListTile>(find.byKey(const Key('household-activity-switch')));
+
+/// The Push wake line's subtitle, read through the tile's key because the
+/// background-delivery line beside it shares the "Checking…" wording.
+String? _pushWakeDetail(WidgetTester tester) => tester
+    .widget<Text>(
+      find
+          .descendant(
+            of: find.byKey(const Key('push-wake-tile')),
+            matching: find.byType(Text),
+          )
+          .last,
+    )
+    .data;
 
 List<Override> _dataOverrides(
   FakeExpenseRepository repository, {
@@ -1045,6 +1083,9 @@ List<Override> _dataOverrides(
       ),
       batteryExemptionGrantedProvider.overrideWith((ref) async => true),
       lastBackgroundSyncProvider.overrideWith(
+        (ref) => Stream<DateTime?>.value(null),
+      ),
+      lastPushReceivedProvider.overrideWith(
         (ref) => Stream<DateTime?>.value(null),
       ),
     ] else
