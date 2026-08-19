@@ -166,6 +166,16 @@ second dialog. The `SyncMetadata` timestamp records when the member first
 answered, and is written only once an answer has come back. A denial is never
 fatal: sync, offline use, and every screen behave exactly as before.
 
+The icon is the app's own mark: a house whose lower half is a receipt with a torn
+bottom edge — the roof says household, the tear says expense.
+`drawable/ic_stat_notification.xml` and `drawable/ic_launcher_foreground.xml` draw
+the same path at two scales, so a notification and the launcher icon it arrives
+under are recognisably one object. Vector drawables cannot share a path between
+files, so those two are kept in sync by hand: change one and change the other.
+Android draws a small icon from its alpha channel alone and tints the result,
+which is why the status-bar copy is a flat white-on-transparent silhouette, and
+why pointing the plugin at `@mipmap/ic_launcher` would post a solid white blob.
+
 The status-bar icon is listed in `android/app/src/main/res/raw/keep.xml`. The
 plugin resolves it from a name string at runtime, so nothing references it
 statically and the release resource shrinker deletes it as unreachable — after
