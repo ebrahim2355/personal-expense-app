@@ -23,6 +23,11 @@ tags:
     description: Fixed-member login and token lifecycle.
   - name: Synchronization
     description: Idempotent mutation push, change pull, and first-device bootstrap.
+  - name: Devices
+    description: >-
+      Registration of the installed apps a push may wake. Messages carry no
+      household detail: the payload is a nudge, and the client composes every
+      notification from its own database after syncing.
 security:
   - bearerAuth: []
 paths:
@@ -287,6 +292,63 @@ paths:
           $ref: '#/components/responses/RateLimited'
         '500':
           $ref: '#/components/responses/InternalError'
+  /v1/devices:
+    post:
+      tags: [Devices]
+      operationId: registerDevice
+      summary: Register this install to be woken by a push
+      description: >-
+        Upserts on the token, so a client may call this on every launch and after
+        every token rotation without creating duplicates. A token already held
+        for the other member is moved to the caller: it identifies the install,
+        not the person signed in to it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceRegistrationRequest'
+      responses:
+        '204':
+          description: The device will be woken when another member changes something.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+  /v1/devices/unregister:
+    post:
+      tags: [Devices]
+      operationId: unregisterDevice
+      summary: Stop waking this install
+      description: >-
+        POST rather than DELETE because Express and intermediary proxies drop
+        DELETE bodies. Called on sign-out, before the refresh token is revoked,
+        so a signed-out phone stops being woken.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceUnregistrationRequest'
+      responses:
+        '204':
+          description: The device is not registered; an unknown token is also accepted.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/BodyTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/RateLimited'
 components:
   securitySchemes:
     bearerAuth:
@@ -420,6 +482,35 @@ components:
           type: string
           minLength: 80
           maxLength: 200
+          writeOnly: true
+    DevicePlatform:
+      type: string
+      enum: [ANDROID]
+    DeviceRegistrationRequest:
+      type: object
+      additionalProperties: false
+      required: [token, platform]
+      properties:
+        token:
+          type: string
+          description: >-
+            The FCM registration token. An address, not a credential: it lets the
+            holder send this device a message, never act as the member. The
+            server stores it and never returns or logs it.
+          minLength: 64
+          maxLength: 4096
+          writeOnly: true
+        platform:
+          $ref: '#/components/schemas/DevicePlatform'
+    DeviceUnregistrationRequest:
+      type: object
+      additionalProperties: false
+      required: [token]
+      properties:
+        token:
+          type: string
+          minLength: 64
+          maxLength: 4096
           writeOnly: true
     AuthResponse:
       type: object
