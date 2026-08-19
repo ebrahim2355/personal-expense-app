@@ -166,15 +166,19 @@ second dialog. The `SyncMetadata` timestamp records when the member first
 answered, and is written only once an answer has come back. A denial is never
 fatal: sync, offline use, and every screen behave exactly as before.
 
-The icon is the app's own mark: a house whose lower half is a receipt with a torn
-bottom edge — the roof says household, the tear says expense.
-`drawable/ic_stat_notification.xml` and `drawable/ic_launcher_foreground.xml` draw
-the same path at two scales, so a notification and the launcher icon it arrives
-under are recognisably one object. Vector drawables cannot share a path between
-files, so those two are kept in sync by hand: change one and change the other.
-Android draws a small icon from its alpha channel alone and tints the result,
-which is why the status-bar copy is a flat white-on-transparent silhouette, and
-why pointing the plugin at `@mipmap/ic_launcher` would post a solid white blob.
+The launcher icon is the Flutter mark, as `mipmap-*/ic_launcher.png` at the five
+densities. It is deliberately the stock artwork: a hand-drawn replacement was
+tried and looked worse on the home screen than the mark it replaced, and this is
+a two-phone household app that is never listed in a store, so there is nothing
+for a distinct brand to win here. `drawable/ic_stat_notification.xml` is that same
+mark as a flat white-on-transparent silhouette, traced from the xxxhdpi bitmap so
+a notification and the icon it arrives under are one object. Android draws a small
+icon from its alpha channel alone and tints the result, so pointing the plugin at
+`@mipmap/ic_launcher` would post a solid white blob — the bitmap's alpha is one
+opaque square — which is why the mark exists twice rather than once.
+
+There is no adaptive icon. Adding one changes how every launcher from API 26 on
+composes the icon, and the appearance being kept here is the legacy bitmap's.
 
 The status-bar icon is listed in `android/app/src/main/res/raw/keep.xml`. The
 plugin resolves it from a name string at runtime, so nothing references it
