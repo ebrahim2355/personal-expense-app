@@ -1,15 +1,26 @@
-<!-- Status-bar icon for household-activity notifications.
+<!-- Status-bar icon for household-activity notifications, and the app's mark.
 
      Android draws a notification small icon from its alpha channel alone and
      tints the result, so this must be a flat white-on-transparent silhouette.
      Pointing the plugin at @mipmap/ic_launcher instead would render as a solid
-     white blob on Android 5+.
+     white blob on Android 5+, which is why this exists as its own drawable
+     rather than reusing the launcher artwork.
 
-     A receipt: one outer subpath with a torn bottom edge, and three inner
-     subpaths that evenOdd carves back out as the printed lines. evenOdd rather
-     than winding order so the holes do not depend on the direction each
-     rectangle happens to be drawn in; supported from API 24, which is this
-     app's minSdk. -->
+     The mark is a house whose lower half is a receipt with a torn bottom edge:
+     the roof says household, the tear says expense. A plain receipt read as a
+     generic document, and a generic status-bar icon is indistinguishable from
+     every other app's.
+
+     One outer subpath traces the whole silhouette — right roof slope, eave,
+     body, tear, left eave, closing left slope — and two inner subpaths that
+     evenOdd carves back out as the printed lines. evenOdd rather than winding
+     order so the holes do not depend on the direction each rectangle happens to
+     be drawn in; supported from API 24, which is this app's minSdk.
+
+     ic_launcher_foreground.xml repeats this path data at launcher scale. Vector
+     drawables cannot share a path between files, so the two are kept in sync by
+     hand: change one, change the other, or the app icon and the notification it
+     posts stop being the same mark. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
@@ -18,5 +29,5 @@
     <path
         android:fillColor="#FFFFFFFF"
         android:fillType="evenOdd"
-        android:pathData="M4,2 L20,2 L20,22 L17.33,20 L14.67,22 L12,20 L9.33,22 L6.67,20 L4,22 Z M7,5.5 L17,5.5 L17,8 L7,8 Z M7,10.25 L17,10.25 L17,12.75 L7,12.75 Z M7,15 L13,15 L13,17.5 L7,17.5 Z" />
+        android:pathData="M12,1.6 L22,9.6 L19,9.6 L19,22.4 L17.25,19.9 L15.5,22.4 L13.75,19.9 L12,22.4 L10.25,19.9 L8.5,22.4 L6.75,19.9 L5,22.4 L5,9.6 L2,9.6 Z M7.6,12.4 L16.4,12.4 L16.4,14 L7.6,14 Z M7.6,16.4 L13.4,16.4 L13.4,18 L7.6,18 Z" />
 </vector>
