@@ -93,6 +93,18 @@ key.properties
 # Android build fails without it; apps/mobile/README.md says where to put it.
 google-services.json
 
+# Firebase service-account keys — the opposite of the file above. This one holds
+# a real private key with admin authority over the entire Firebase project, so a
+# single accidental commit to a public repo hands that project away. It belongs
+# on the API host as FIREBASE_SERVICE_ACCOUNT_BASE64 and nowhere in this tree.
+# The patterns match the console's own download name, because that name is what
+# actually lands in a working directory, and they are deliberately broad: the
+# cost of ignoring an unrelated file is a puzzled minute, the cost of missing one
+# of these is the project.
+*firebase-adminsdk*.json
+*service-account*.json
+*serviceaccount*.json
+
 # Test and tool reports
 test-results/
 reports/
