@@ -3155,10 +3155,16 @@ class SyncMetadataRow extends DataClass implements Insertable<SyncMetadataRow> {
   /// to on: a member who granted the permission asked to be told.
   final bool householdActivityNotificationsEnabled;
 
-  /// When Android's battery-optimization exemption was last asked for, or null
-  /// when the ask is still owed. Unlike the notification dialog this one can be
-  /// re-shown at will, so this exists to avoid nagging rather than to ration a
-  /// single chance.
+  /// When this app last opened Android's battery-optimization screen, or null.
+  ///
+  /// No longer written. It existed to stop a startup ask from reappearing on
+  /// every launch, and that ask is gone: the exemption is now requested only from
+  /// the Settings advisory, where the member initiates it and Android's live
+  /// answer is the only state needed. The column stays because dropping it would
+  /// cost a schema version and a table-rewriting migration against the
+  /// household's live database to reclaim one nullable field of one row — and
+  /// because what the two phones already have stored is a true record of when
+  /// each was asked.
   final DateTime? batteryExemptionRequestedAt;
 
   /// When the WorkManager isolate last finished a run, or null when it never has
