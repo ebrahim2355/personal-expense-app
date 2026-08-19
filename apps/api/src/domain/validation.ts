@@ -2,14 +2,17 @@ import { z } from 'zod';
 
 import {
   DEFAULT_PAGE_SIZE,
+  DEVICE_PLATFORMS,
   EXPENSE_CATEGORIES,
   MAX_AMOUNT_MINOR,
+  MAX_DEVICE_TOKEN_LENGTH,
   MAX_MUTATIONS_PER_REQUEST,
   MAX_NOTE_CODE_POINTS,
   MAX_PAGE_SIZE,
   MAX_SEQUENCE_NUMBER,
   MEMBER_KEYS,
   MIN_AMOUNT_MINOR,
+  MIN_DEVICE_TOKEN_LENGTH,
   MUTATION_OPERATIONS,
   POISHA_PER_TAKA,
   SYNC_ENTITY_TYPES,
@@ -109,6 +112,24 @@ export const refreshSchema = z
   .strict();
 
 export const logoutSchema = refreshSchema;
+
+const deviceTokenSchema = z
+  .string()
+  .min(MIN_DEVICE_TOKEN_LENGTH)
+  .max(MAX_DEVICE_TOKEN_LENGTH);
+
+export const deviceRegistrationSchema = z
+  .object({
+    token: deviceTokenSchema,
+    platform: z.enum(DEVICE_PLATFORMS),
+  })
+  .strict();
+
+export const deviceUnregistrationSchema = z
+  .object({
+    token: deviceTokenSchema,
+  })
+  .strict();
 
 export const mutationBaseSchema = z
   .object({
