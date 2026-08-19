@@ -3,7 +3,7 @@
 ## Repository layout
 
 - `apps/api`: Node.js, TypeScript, and Express API. Prisma is the only database access layer; PostgreSQL migrations live in `apps/api/prisma/migrations`.
-- `apps/mobile`: Flutter Android app. Use Riverpod for state, Drift over SQLite for durable local data, Dio for HTTP, and Android WorkManager integration only for best-effort background sync.
+- `apps/mobile`: Flutter Android app. Use Riverpod for state, Drift over SQLite for durable local data, Dio for HTTP, Android WorkManager integration for best-effort background sync, and `firebase_messaging` for the data-only push that wakes that same sync sooner.
 - `packages/contracts/openapi.yaml`: the single API contract. Generate or validate client/server types from it; do not create undocumented duplicate request or response shapes.
 - `docs`: product, architecture, and delivery guidance.
 
@@ -83,6 +83,10 @@ The lending ledger is summed separately as `ebrahimOwesMinor - sumonOwesMinor` o
 - Ask Android for the battery-optimization exemption at startup, right after the notification ask. Gate it on `PowerManager.isIgnoringBatteryOptimizations`, not on the stored flag, and never record an ask whose dialog failed to launch. Without the exemption an idle phone drops the app to App Standby bucket 40 (RARE) and defers the fifteen-minute job for hours. Keep the exemption out of the "will notify" decision: it governs when a notification arrives, not whether it can be posted.
 - `background_work_policy.dart` and its `MainActivity` handler are the only platform channel in the app, and they are **UI-isolate only** — the handler lives on the Activity, so the WorkManager isolate has no receiver. Every channel call answers `false` rather than throwing.
 - Record `lastBackgroundSyncAt` from the background dispatcher for every outcome, offline included: the column answers whether Android ran the worker, which no other stored value can. Write it outside `SyncCoordinator` so the coordinator stays ignorant of its isolate, and leave `updatedAt` alone.
+- A push is a nudge, never a message. The server sends data only; the client syncs and composes every notification from its own database, which is the only reason author suppression and the household-activity switch still apply — the tray draws a server-composed `notification` block before any Dart runs, and the switch exists only in device-local `SyncMetadata`. Never add a `notification` block unless the force-stop measurement in `apps/mobile/README.md` forces the documented content-free fallback.
+- Send the push after every mutation transaction has committed, fire-and-forget with a `.catch()` attached, and only for a change that actually landed: a replayed mutation returns the stored receipt's `APPLIED` verbatim, so status alone cannot tell a new change from a re-upload. A failed send must never fail a mutation.
+- `firebase_messaging` must never ask for a permission. `NotificationSettingsController.ensureNotificationPermission` is the single owner of that ask, and its rule — never record an ask that failed to reach Android — is the fix for a shipped bug that a second asker would silently undo.
+- Device registration tokens are addresses, not credentials, but they are never logged and never printed: the logger redacts `token` and `privateKey` at every depth. Push works without a credential configured — the API logs "push disabled" once and clients fall back to polling, which is why FCM is an accelerator and the fifteen-minute poll stays.
 
 ## Validation and security expectations
 
@@ -96,6 +100,6 @@ The lending ledger is summed separately as `ebrahimOwesMinor - sumonOwesMinor` o
 
 ## Scope boundaries
 
-In scope: login for the two fixed members, a dashboard scoped to the open spending period with settlement, closing a period to open the next one, add/view/edit/soft-delete expenses, a manual lending ledger, history filters and local search, offline local operation, synchronization, and Android notifications for the other member's synced activity.
+In scope: login for the two fixed members, a dashboard scoped to the open spending period with settlement, closing a period to open the next one, add/view/edit/soft-delete expenses, a manual lending ledger, history filters and local search, offline local operation, synchronization, Android notifications for the other member's synced activity, and near-instant delivery of those notifications through data-only FCM push with background polling as the backstop.
 
-Out of scope: budgets, custom split percentages, receipts, push delivery through FCM (notifications arrive with background sync, so they inherit its delay), recurring expenses, bank integration, iOS, web administration, public registration, new members, multiple households, sub-taka amounts, loans derived automatically from expenses, and server-side search or dashboard summaries.
+Out of scope: budgets, custom split percentages, receipts, server-composed notification content (a push carries no detail, so the tray never draws one), recurring expenses, bank integration, iOS, web administration, public registration, new members, multiple households, sub-taka amounts, loans derived automatically from expenses, and server-side search or dashboard summaries.

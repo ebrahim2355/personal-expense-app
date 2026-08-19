@@ -68,7 +68,10 @@ cp apps/api/.env.example apps/api/.env
 
 At minimum, runtime configuration requires `DATABASE_URL`, two independent
 random signing secrets of at least 32 characters, and the environment settings
-documented in [apps/api/.env.example](apps/api/.env.example). Production also
+documented in [apps/api/.env.example](apps/api/.env.example).
+`FIREBASE_SERVICE_ACCOUNT_BASE64` is optional: with it the API sends the push that
+wakes the other member's phone, and without it every route still works and clients
+fall back to background polling. Production also
 requires `TRUST_PROXY_HOPS` greater than zero, HTTPS CORS origins if browser
 clients are ever allowed, and stable secret values across deployments.
 
@@ -137,6 +140,9 @@ routes are:
   covering expenses, spending periods, and loan entries.
 - `GET /v1/sync/bootstrap` for first-device snapshot pagination.
 - `GET /v1/sync/changes` for cursor-ordered deltas and tombstones.
+- `POST /v1/devices` and `POST /v1/devices/unregister` for the push registration
+  token this install is woken through. Both are idempotent, and the unregister is
+  a POST because proxies drop DELETE bodies.
 - `/health/live`, `/health/ready`, and `/health` for operations.
 
 Entity IDs and mutation IDs are distinct client-generated UUIDs. Every mutation,
@@ -277,13 +283,24 @@ installation, and again on a later open while notifications are still off — an
 that fails before Android sees it must not count as a denial. Android shows its
 dialog only once per install and answers silently afterwards, so a member who
 declined is never prompted twice. Denial is never fatal: the app works normally
-without notifications. Announcements arrive with
+without notifications. On the polling path alone announcements arrive with
 background sync, which runs every fifteen minutes at best: that is WorkManager's
 floor, not a promise, and Doze can stretch a real interval to hours on an idle
 phone. Opening the app or pulling to refresh syncs immediately. A device is never
 notified about its own entries, and a fresh installation is silent while it
 downloads existing history. Settings has a switch to stop the announcements
 without affecting sync.
+
+Announcements themselves arrive two ways when the app is not in front of you. The
+API sends a data-only Firebase Cloud Messaging push the moment a change lands,
+which wakes the app in seconds even on an idle phone, and the fifteen-minute
+background sync remains the backstop for a push that was never sent, never
+delivered, or arrived while the phone was offline. The push carries no content at
+all — the app syncs and composes the notification from its own database — so
+author suppression and the Settings switch keep working, and amounts, notes, and
+member names never traverse Google. Push needs
+`FIREBASE_SERVICE_ACCOUNT_BASE64` configured on the API; without it nothing is
+sent and delivery falls back to polling alone.
 
 Immediately after that, the first open also asks Android to exempt the app from
 battery optimisation. This is what makes closed-app delivery usable rather than
@@ -302,11 +319,13 @@ Two limits remain, and Settings says both rather than implying the advisory bein
 clear means instant delivery. Clearing the app from Recents force-stops it on
 HyperOS/MIUI and cancels its background work until the app is next opened; only
 the OEM's Autostart toggle mitigates that, and no app can read or set it, so the
-app gives instructions instead. And even fully exempted this is still polling —
-FCM is the only route to near-instant delivery that survives a force-stop, and it
-stays deferred. Settings shows when the background isolate last completed a run,
+app gives instructions instead. And a push is fast, not guaranteed: Google may
+delay a message, an offline phone gets nothing until it reconnects, and whether a
+force-stopped package is reachable at all is measured on the device rather than
+assumed — which is why the fifteen-minute poll stays. Settings shows when the
+background isolate last completed a run and when a push last woke this device,
 which is the one honest answer to "is closed-app delivery working at all"; null
-means it never has on this install.
+means neither has on this install.
 
 ## Production deployment and Android installation
 
@@ -337,10 +356,12 @@ Creating or modifying a live project remains an explicit operator action.
 - Access JWTs are short-lived. Refresh tokens are opaque, hashed at rest,
   rotated, revocable, and family-revoked on detected reuse.
 - API inputs are strictly validated; ORM queries are household scoped; logs
-  redact authorization, token, PIN, hash, and database URL fields.
+  redact authorization, token, PIN, hash, private-key, and database URL fields.
+  Device push tokens are stored so the API can address a phone, and are never
+  logged.
 - This release has no registration, member management, hard delete, server
   dashboard summary, server search, sub-taka amounts, public API key, iOS app,
-  web administration, or FCM push delivery.
+  web administration, or server-composed push content.
 
 Further guidance:
 

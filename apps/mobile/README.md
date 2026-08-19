@@ -22,8 +22,8 @@ on raw Dio or Drift implementation types.
 - History: newest-first local rows with a local text search plus date, payer, and
   category filters, edit, and confirmed soft deletion.
 - Settings: signed-in member, API environment, app version, manual sync, logout,
-  a notifications card with the background-delivery advisories, and a concise
-  local-data/background-sync explanation.
+  a notifications card with the background-delivery advisories and the push-wake
+  line, and a concise local-data/background-sync explanation.
 
 Bottom navigation is Dashboard, Lending, History, and Settings.
 
@@ -61,11 +61,37 @@ Production signing, package/version/icon ownership, signed APK/AAB commands,
 and data-preserving install/upgrade steps are documented in
 [`docs/PRODUCTION_DEPLOYMENT.md`](../../docs/PRODUCTION_DEPLOYMENT.md).
 
+## Local setup: `google-services.json`
+
+The Android build needs `android/app/google-services.json`, the Firebase client
+configuration for package `com.sumonebrahim.houseexpenses`. It is **not in the
+repository**. Download it from the Firebase console (Project settings → Your apps
+→ Android app) and drop it at exactly that path.
+
+It is deliberately gitignored. The file is a client identifier rather than a
+credential — it holds no private key and grants no authority — but it names the
+Firebase project and its API key to anyone who clones a public repository, so it
+is provisioned locally instead. The cost is that a fresh clone cannot build
+Android until it is in place, and the failure names the plugin rather than the
+file:
+
+```text
+Execution failed for task ':app:processDebugGoogleServices'.
+> File google-services.json is missing. The Google Services Plugin cannot
+  function without it.
+     Searched Location: ...
+```
+
+That is the missing file and nothing else — the plugin, the AGP version, and the
+classpath entry are all fine. Tests, `flutter analyze`, and the API need nothing
+from it; only the Android build and an actual push do.
+
 ## Generate and verify
 
 `timezone` supplies the IANA `Asia/Dhaka` calendar boundaries; `package_info_plus`
-supplies the Settings version label. Both are resolved through Flutter pub and
-pinned in `pubspec.lock`.
+supplies the Settings version label; `firebase_core` and `firebase_messaging`
+supply the push registration. All are resolved through Flutter pub and pinned in
+`pubspec.lock`.
 
 The generated Drift database is committed so a clone analyzes immediately.
 Regenerate it whenever `app_database.dart` changes:
@@ -115,9 +141,9 @@ flutter clean
   retried.
 - Dio refreshes a 401 once with refresh-token rotation and retries the original
   request once. Refresh failure clears secure tokens without deleting Drift data.
-- Launch, resume, mutation, manual refresh, live connectivity recovery, and
-  network-constrained WorkManager jobs trigger attempts. Connectivity is never
-  treated as proof that the API is reachable.
+- Launch, resume, mutation, manual refresh, live connectivity recovery,
+  network-constrained WorkManager jobs, and an arriving FCM push trigger
+  attempts. Connectivity is never treated as proof that the API is reachable.
 - A sync that brings in the other member's expense, loan, or spending-period
   change posts one Android notification per change, plus a summary when a single
   sync brings several. The author is taken from the change feed, so a device is
@@ -145,14 +171,19 @@ shrink resources, so this only ever appears in a release APK. Verify a release
 build with `aapt2 dump resources build/app/outputs/flutter-apk/app-release.apk`
 and confirm `drawable/ic_stat_notification` is listed.
 
-Announcements ride on background sync, which runs every fifteen minutes at best.
-Fifteen minutes is WorkManager's floor rather than a guarantee — see the caveat
-below — so a notification can be late by much more than that. Opening the app or
-pulling to refresh syncs and announces immediately. Near-instant delivery would
-need FCM, which is deliberately out of scope for now.
+Announcements ride on sync, and sync has two triggers when the app is not in
+front of you. A data-only FCM push, sent by the API the moment a change lands,
+wakes the app in seconds: Play Services holds one socket that Doze does not
+touch, so it arrives on an idle phone. Background polling every fifteen minutes
+is the backstop for a push that was never sent, never delivered, or arrived while
+the phone was offline. Fifteen minutes is WorkManager's floor rather than a
+guarantee — see the caveat below — so on the polling path alone a notification can
+be late by much more than that. Opening the app or pulling to refresh syncs and
+announces immediately.
 
 The Settings notifications card carries a household-activity switch, a
-background-sync line, and up to two advisories. Whenever Android reports that
+background-sync line, a push-wake line, and up to two advisories. Whenever
+Android reports that
 notifications are blocked, a warning explains how to re-enable them and offers
 **Open settings** and **Re-check** buttons. There is no in-app "ask again":
 Android does not re-show its dialog after a denial, so a button claiming to would
@@ -163,6 +194,60 @@ an immediate run or an exact interval, so foreground and manual triggers remain
 authoritative for freshness, and notification timing inherits the same limit —
 Doze and App Standby can stretch a fifteen-minute period to hours on an idle
 phone.
+
+## Push wake
+
+The push carries no content. The whole payload is
+`data: { "type": "household-activity" }`, sent `high` priority with a thirty-minute
+TTL and one collapse key, and the app composes every notification from its own
+database after syncing.
+
+That is a decision, not a shortcut. A server-composed `notification` block is
+drawn by the system tray **before any Dart runs**, which would bypass both rules
+that decide what gets said: the author-suppression check on the change feed, and
+the household-activity switch — which lives only in this device's Drift
+`SyncMetadata`, where the server cannot read it. Keeping the payload empty also
+keeps amounts, notes, and member names off Google's wire, and keeps the local
+database the only thing a notification is ever composed from, so a notification
+can never describe a change this device does not have.
+
+A push and a WorkManager job do the same work through the same code:
+`runBackgroundSync()` is shared by both entry points, so a wake records
+`lastBackgroundSyncAt` and composes notifications exactly as a poll does. The FCM
+background handler calls `Firebase.initializeApp()` first — its isolate has no
+Firebase instance of its own — and, like the WorkManager isolate, must never touch
+the platform channel.
+
+Registration is per install. `PushRegistrationController` posts the token to
+`POST /v1/devices` after sign-in and on every `onTokenRefresh`, remembers a
+SHA-256 fingerprint of what it sent so an unchanged token is not re-POSTed on
+every launch, and leaves `fcmTokenRegisteredAt` null when the POST fails so the
+next launch retries. Signing out deregisters first, while the access token is
+still valid, because a signed-out phone must stop being woken. A phone with
+broken or absent Play Services gets a null token, registers nothing, and runs on
+polling alone.
+
+`firebase_messaging` never asks for a permission. The notification ask has a
+single owner — see the tri-state logic above — and a second asker would silently
+undo it.
+
+Settings shows **Push wake**: "Never received on this device" until the first
+push lands, then the timestamp of the most recent one. That line is the only way
+to tell a working push from a well-timed poll, which is exactly why it is there.
+
+### What FCM does not fix
+
+- Clearing the app from Recents force-stops it on HyperOS/MIUI. Whether a
+  data-only message still reaches a force-stopped package is not reliably
+  documented, so it is measured on the device rather than assumed; the Autostart
+  guidance in Settings stays either way.
+- A phone that is offline when the push is sent gets nothing. The fifteen-minute
+  poll is what covers it, which is why polling stays.
+- Google may still delay a message. "Near-instant" is typical, not promised.
+- The battery-exemption and Autostart advisories all stay. FCM makes the good
+  case fast; it does not make the bad cases good.
+- With no `FIREBASE_SERVICE_ACCOUNT_BASE64` configured on the API, no push is
+  ever sent and the app behaves exactly as it did before push existed.
 
 ## Background delivery on an idle phone
 
@@ -210,9 +295,10 @@ answer to "has closed-app delivery ever worked here".
 Two limits survive a granted exemption. Clearing the app from Recents force-stops
 it on HyperOS/MIUI and cancels its jobs until the app is next opened; only the
 OEM Autostart toggle mitigates that, and no app can read or set it, so Settings
-gives instructions and a shortcut into the app's settings page. And this is still
-polling: FCM is the only route to near-instant delivery that survives a
-force-stop, and it stays out of scope.
+gives instructions and a shortcut into the app's settings page. And polling alone
+is only ever fifteen minutes at best, which is what the push above exists to
+shorten — it does not replace the poll, and on a force-stopped package it may not
+reach the app either.
 
 Verify on a device after installing: `adb shell dumpsys deviceidle whitelist`
 lists the package, `am get-standby-bucket` reports 5, and `dumpsys jobscheduler`
@@ -227,5 +313,6 @@ execution … because it is being executed before schedule" and reschedules.
 `MainActivity.configureFlutterEngine`. It exposes the exemption query, the
 exemption dialog, and the app-details settings page; every call answers `false`
 rather than throwing, including when `startActivity` finds no activity. **It is
-usable only from the UI isolate** — the handler lives on the Activity, so the
-WorkManager isolate has no receiver and must never call it.
+usable only from the UI isolate** — the handler lives on the Activity, so neither
+the WorkManager isolate nor the FCM background isolate has a receiver, and neither
+must ever call it.
