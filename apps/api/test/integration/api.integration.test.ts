@@ -414,6 +414,7 @@ async function clearMutableData(): Promise<void> {
   await prisma.loanEntry.deleteMany();
   await prisma.spendingPeriod.deleteMany();
   await prisma.refreshToken.deleteMany();
+  await prisma.deviceToken.deleteMany();
 }
 
 /** Provisions the open period every expense needs, as `bootstrap.ts` does. */
@@ -1374,5 +1375,129 @@ integration('PostgreSQL API integration', () => {
       ).version,
     ).toBe(2);
     expect(await prisma.loanEntry.count({ where: { id: loanId } })).toBe(1);
+  });
+
+  it('registers a device once per token and stops waking it on unregister', async () => {
+    const session = await login('SUMON', sumonPin);
+    const token = `d${'0'.repeat(150)}`;
+
+    const registered = await request(app)
+      .post('/v1/devices')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .send({ token, platform: 'ANDROID' });
+    expect(registered.status).toBe(204);
+
+    // The client re-registers on every launch because it cannot tell a token the
+    // server already has from one that never arrived. That must stay one row.
+    const again = await request(app)
+      .post('/v1/devices')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .send({ token, platform: 'ANDROID' });
+    expect(again.status).toBe(204);
+
+    const stored = await prisma.deviceToken.findMany();
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.token).toBe(token);
+    expect(stored[0]?.memberId).toBe(primarySumon.memberId);
+    expect(stored[0]?.householdId).toBe(primarySumon.householdId);
+    expect(stored[0]?.disabledAt).toBeNull();
+
+    const removed = await request(app)
+      .post('/v1/devices/unregister')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .send({ token });
+    expect(removed.status).toBe(204);
+    expect(await prisma.deviceToken.count()).toBe(0);
+
+    // A sign-out must never fail because the server had nothing to forget.
+    const removedAgain = await request(app)
+      .post('/v1/devices/unregister')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .send({ token });
+    expect(removedAgain.status).toBe(204);
+  });
+
+  it('moves a device to whichever member signed in last', async () => {
+    const token = `s${'1'.repeat(150)}`;
+    const sumon = await login('SUMON', sumonPin);
+    const ebrahim = await login('EBRAHIM', ebrahimPin);
+
+    await request(app)
+      .post('/v1/devices')
+      .set('Authorization', `Bearer ${sumon.accessToken}`)
+      .send({ token, platform: 'ANDROID' });
+    await request(app)
+      .post('/v1/devices')
+      .set('Authorization', `Bearer ${ebrahim.accessToken}`)
+      .send({ token, platform: 'ANDROID' });
+
+    // An FCM token belongs to the install, not the member. Leaving the first
+    // owner in place would wake this phone for its own changes and leave it
+    // silent for the other member's — precisely backwards.
+    const stored = await prisma.deviceToken.findMany();
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.memberId).not.toBe(primarySumon.memberId);
+  });
+
+  it('rejects a device registration that is unauthenticated or malformed', async () => {
+    const token = `x${'2'.repeat(150)}`;
+    const session = await login('SUMON', sumonPin);
+
+    const anonymous = await request(app)
+      .post('/v1/devices')
+      .send({ token, platform: 'ANDROID' });
+    expect(anonymous.status).toBe(401);
+
+    const extraField = await request(app)
+      .post('/v1/devices')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .send({ token, platform: 'ANDROID', nickname: 'phone' });
+    expect(extraField.status).toBe(422);
+
+    const shortToken = await request(app)
+      .post('/v1/devices')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .send({ token: 'too-short', platform: 'ANDROID' });
+    expect(shortToken.status).toBe(422);
+
+    const foreignPlatform = await request(app)
+      .post('/v1/devices')
+      .set('Authorization', `Bearer ${session.accessToken}`)
+      .send({ token, platform: 'IOS' });
+    expect(foreignPlatform.status).toBe(422);
+
+    expect(await prisma.deviceToken.count()).toBe(0);
+  });
+
+  it('wakes the household only when a mutation actually landed', async () => {
+    const session = await login('SUMON', sumonPin);
+    const batch = [
+      createMutation('EXPENSE', 'CREATE', randomUUID(), 0, defaultExpense),
+    ];
+
+    await postMutations(session.accessToken, batch);
+    await RecordingActivityNotifier.settle();
+    expect(activityNotifier.actors).toHaveLength(1);
+    expect(activityNotifier.actors[0]?.memberId).toBe(primarySumon.memberId);
+
+    // The replay is deduplicated, so it adds nothing to the change feed and
+    // there is nothing for the other phone to come and fetch.
+    await postMutations(session.accessToken, batch);
+    await RecordingActivityNotifier.settle();
+    expect(activityNotifier.actors).toHaveLength(1);
+  });
+
+  it('applies a mutation even when the push fails outright', async () => {
+    const session = await login('SUMON', sumonPin);
+    activityNotifier.failure = new Error('Firebase is unreachable.');
+    const expenseId = randomUUID();
+
+    const response = await postMutations(session.accessToken, [
+      createMutation('EXPENSE', 'CREATE', expenseId, 0, defaultExpense),
+    ]);
+    await RecordingActivityNotifier.settle();
+
+    expect(response.results[0]?.status).toBe('APPLIED');
+    expect(await prisma.expense.count({ where: { id: expenseId } })).toBe(1);
   });
 });
