@@ -211,6 +211,8 @@ final class _NotificationsCard extends ConsumerWidget {
           ),
           const Divider(height: 1),
           const _BackgroundDeliveryTile(),
+          const Divider(height: 1),
+          const _PushWakeTile(),
           if (blocked) ...<Widget>[
             const Divider(height: 1),
             _Advisory(
@@ -323,6 +325,38 @@ final class _BackgroundDeliveryTile extends ConsumerWidget {
       key: const Key('background-delivery-tile'),
       leading: const Icon(Icons.sync_outlined),
       title: const Text('Background sync'),
+      subtitle: Text(detail),
+    );
+  }
+}
+
+/// Reports whether a push has ever reached this device.
+///
+/// Kept apart from [_BackgroundDeliveryTile] because a poll that happens to land
+/// seconds after the other member's change looks exactly like a push. Two
+/// timestamps written by two paths is the only way to tell which mechanism is
+/// actually working here — which matters, because the phone-specific reasons a
+/// push never arrives are ones only the member can fix.
+final class _PushWakeTile extends ConsumerWidget {
+  const _PushWakeTile();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final lastPush = ref.watch(lastPushReceivedProvider);
+    final String detail;
+    if (!lastPush.hasValue) {
+      detail = 'Checking…';
+    } else if (lastPush.valueOrNull == null) {
+      detail = 'Never received on this device.';
+    } else {
+      detail =
+          'Last received '
+          '${DhakaTime.initialize().formatDateTime(lastPush.valueOrNull!)}.';
+    }
+    return ListTile(
+      key: const Key('push-wake-tile'),
+      leading: const Icon(Icons.bolt_outlined),
+      title: const Text('Push wake'),
       subtitle: Text(detail),
     );
   }
