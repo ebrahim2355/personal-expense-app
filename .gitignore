@@ -87,6 +87,12 @@ key.properties
 *.pem
 *.der
 
+# Firebase client configuration. Not a credential — it holds no private key and
+# grants no authority — but it names the Firebase project and its API key to
+# anyone who clones a public repo, so it is provisioned locally instead. The
+# Android build fails without it; apps/mobile/README.md says where to put it.
+google-services.json
+
 # Test and tool reports
 test-results/
 reports/
