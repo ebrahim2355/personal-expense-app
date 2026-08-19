@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:drift/drift.dart' show Value, driftRuntimeOptions;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:houseexpenses/src/application/push_registration.dart';
 import 'package:houseexpenses/src/application/session_controller.dart';
 import 'package:houseexpenses/src/application/sync_coordinator.dart';
 import 'package:houseexpenses/src/data/local/app_database.dart';
@@ -795,6 +796,9 @@ final class RealMobileClient {
       tokenStore: tokenStore,
       sessionController: session,
       database: database,
+      // This harness never registers a device, so there is nothing to give up on
+      // the way out.
+      deviceDeregistration: noDeviceDeregistration,
     );
     final authenticatedClient = AuthenticatedApiClient(
       transport: transport,

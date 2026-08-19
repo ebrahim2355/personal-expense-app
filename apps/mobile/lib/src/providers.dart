@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'application/notification_settings.dart';
+import 'application/push_registration.dart';
 import 'application/session_controller.dart';
 import 'application/sync_coordinator.dart';
 import 'application/sync_triggers.dart';
@@ -22,6 +23,7 @@ import 'domain/spending_period.dart';
 import 'notifications/household_activity_notifier.dart';
 import 'notifications/local_notification_presenter.dart';
 import 'notifications/notification_permissions.dart';
+import 'notifications/push_messaging.dart';
 
 final appConfigProvider = Provider<AppConfig>((ref) {
   return AppConfig.fromEnvironment();
@@ -63,6 +65,14 @@ final expenseSyncApiProvider = Provider<ExpenseSyncApi>((ref) {
   return DioExpenseSyncApi(ref.watch(authenticatedApiClientProvider));
 });
 
+final deviceRegistrationApiProvider = Provider<DeviceRegistrationApi>((ref) {
+  return DioDeviceRegistrationApi(ref.watch(authenticatedApiClientProvider));
+});
+
+final pushMessagingProvider = Provider<PushMessaging>((ref) {
+  return FirebasePushMessaging();
+});
+
 final expenseRepositoryProvider = Provider<ExpenseRepository>((ref) {
   final repository = DriftExpenseRepository(ref.watch(appDatabaseProvider));
   ref.onDispose(repository.close);
@@ -87,6 +97,7 @@ final authRepositoryProvider = Provider<MemberAuthRepository>((ref) {
     tokenStore: ref.watch(tokenStoreProvider),
     sessionController: ref.watch(sessionControllerProvider),
     database: ref.watch(appDatabaseProvider),
+    deviceDeregistration: ref.watch(pushRegistrationControllerProvider),
   );
 });
 
@@ -148,6 +159,20 @@ final syncTriggerControllerProvider = Provider<SyncTriggerController>((ref) {
   return controller;
 });
 
+final pushRegistrationControllerProvider = Provider<PushRegistrationController>(
+  (ref) {
+    final controller = PushRegistrationController(
+      database: ref.watch(appDatabaseProvider),
+      api: ref.watch(deviceRegistrationApiProvider),
+      messaging: ref.watch(pushMessagingProvider),
+      sessionController: ref.watch(sessionControllerProvider),
+      syncCoordinator: ref.watch(syncCoordinatorProvider),
+    );
+    ref.onDispose(controller.dispose);
+    return controller;
+  },
+);
+
 final appStartupProvider = FutureProvider<void>((ref) async {
   final session = ref.watch(sessionControllerProvider);
   final auth = ref.watch(authRepositoryProvider);
@@ -167,6 +192,10 @@ final appStartupProvider = FutureProvider<void>((ref) async {
   await ref
       .watch(notificationSettingsControllerProvider)
       .ensureBackgroundExemption();
+  // Before the sync triggers, so a device that is already signed in registers on
+  // this launch rather than on the next one. It never throws either: a phone
+  // without Play Services simply keeps the polling it already had.
+  await ref.watch(pushRegistrationControllerProvider).start();
   await ref.watch(syncTriggerControllerProvider).start();
 });
 
@@ -205,6 +234,15 @@ final lastBackgroundSyncProvider = StreamProvider<DateTime?>((ref) {
   return ref
       .watch(notificationSettingsControllerProvider)
       .watchLastBackgroundSync();
+});
+
+/// When a push last woke this device. Null means never on this install, which is
+/// the answer to "is push reaching this phone" — and the only way to tell a push
+/// apart from a poll that happened to land at the right moment.
+final lastPushReceivedProvider = StreamProvider<DateTime?>((ref) {
+  return ref
+      .watch(notificationSettingsControllerProvider)
+      .watchLastPushReceived();
 });
 
 final visibleExpensesProvider = StreamProvider<List<Expense>>((ref) {

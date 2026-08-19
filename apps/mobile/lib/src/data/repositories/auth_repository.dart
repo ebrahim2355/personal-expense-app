@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart';
 
+import '../../application/push_registration.dart';
 import '../../application/session_controller.dart';
 import '../../domain/expense.dart';
 import '../../domain/session.dart';
@@ -23,12 +24,14 @@ final class AuthRepository implements MemberAuthRepository {
     required this._tokenStore,
     required this._sessionController,
     required this._database,
+    required this._deviceDeregistration,
   });
 
   final AuthenticationApi _api;
   final TokenStore _tokenStore;
   final SessionController _sessionController;
   final AppDatabase _database;
+  final DeviceDeregistration _deviceDeregistration;
 
   @override
   Future<MemberIdentity> login(HouseholdMember member, String pin) async {
@@ -76,6 +79,11 @@ final class AuthRepository implements MemberAuthRepository {
   Future<void> logout() async {
     final tokens = await _tokenStore.read();
     if (tokens != null) {
+      // Before the logout call, because giving up the push token needs an access
+      // token the server still accepts, and logout is what revokes it. A phone
+      // that stays registered after sign-out would be woken for a household it
+      // can no longer show.
+      await _deviceDeregistration.unregister();
       try {
         await _api.logout(tokens);
       } on Object {
