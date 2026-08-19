@@ -258,8 +258,9 @@ to tell a working push from a well-timed poll, which is exactly why it is there.
 - A phone that is offline when the push is sent gets nothing. The fifteen-minute
   poll is what covers it, which is why polling stays.
 - Google may still delay a message. "Near-instant" is typical, not promised.
-- The battery-exemption and Autostart advisories all stay. FCM makes the good
-  case fast; it does not make the bad cases good.
+- The battery-exemption and Autostart advisories both stay, though neither is
+  prompted at startup any more. FCM makes the good case fast; it does not make the
+  bad cases good.
 - With no `FIREBASE_SERVICE_ACCOUNT_BASE64` configured on the API, no push is
   ever sent and the app behaves exactly as it did before push existed.
 
@@ -273,16 +274,43 @@ bucket 10 and runs on time. The power-save whitelist is the lever: an app that i
 ignoring battery optimisations moves to bucket **5 (EXEMPTED)** and leaves both
 Doze and the JobScheduler quota behind.
 
-`ensureBackgroundExemption()` therefore runs at startup immediately after the
-notification ask, in that order — allow notifications first, then keep them
-timely. It is gated on `PowerManager.isIgnoringBatteryOptimizations` rather than
-on the stored flag, so an install granted the exemption outside the app is never
-nagged, and it does **not** record an ask whose dialog failed to launch: some OEM
-builds have removed the activity, and recording that would spend the prompt on
-something nobody saw. Unlike `POST_NOTIFICATIONS` this ask can be re-shown, so
-Settings offers a real **Allow background activity** button. Nothing invalidates
-the provider after that tap — Android reports only that the screen opened, never
-what the member chose — so **Re-check** is the honest way back.
+The exemption protects the poll rather than the push, and that division is what
+makes it safe to stop asking for it up front. Android's own limits put a
+high-priority FCM message outside Doze entirely — with the screen off and Doze
+active it has no execution limits — and since Android 13 the standby bucket no
+longer governs how many high-priority messages an app may receive. The one
+documented way to lose that priority is to keep sending high-priority messages
+that produce no notification, which is a further reason the API excludes the
+author's own devices from every send. A regular job has no such immunity: in
+bucket 40 it gets ten minutes of runtime per rolling twenty-four hours with
+network **disabled**, which is the "deferred for hours" measured above, and Doze's
+exemption list is documented as exempting an app from bucket-based restrictions
+altogether.
+
+Nothing asks for that exemption at startup. It was asked for there once,
+immediately after the notification permission, and the cost was two system screens
+in front of a member who had not yet seen one of the app's own — the second of
+which is not a yes/no dialog on this phone but the **Battery details** screen
+described below, whose correct answer is not the one Android recommends. A
+permission dialog can be answered in a second; that screen cannot be, and asking
+for it before the app has given anyone a reason to care is how it gets dismissed.
+
+The Settings advisory asks instead, and only while
+`PowerManager.isIgnoringBatteryOptimizations` reports the exemption missing, so the
+request arrives with its reason attached and an install that already has it —
+including one granted outside the app — never sees the advisory at all. Unlike
+`POST_NOTIFICATIONS` this ask can be re-shown at will, which is what makes **Allow
+background activity** a real button and what makes recording the ask pointless:
+there is no single chance to ration, so Android's live answer is the whole state.
+`SyncMetadata.batteryExemptionRequestedAt` is no longer written and survives only
+as the record of the startup ask both phones already answered. Nothing invalidates
+the provider after that tap either — Android reports only that the screen opened,
+never what the member chose — so **Re-check** is the honest way back.
+
+The trade is real and deliberate: a member who never opens Settings stays
+throttled, and on this device that means the fifteen-minute backstop keeps running
+late. What it does not delay is the push, which is the path that carries almost
+every announcement.
 
 What that intent opens is OEM-specific, and on the HyperOS phone this ships to it
 is not a dialog at all: it is a **Battery details** screen whose `Battery saver`
