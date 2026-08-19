@@ -19,6 +19,14 @@ export function createLogger(config: AppConfig): AppLogger {
         '*.accessToken',
         'refreshToken',
         '*.refreshToken',
+        // An FCM registration token is enough to send a device a notification,
+        // so it is redacted alongside the credentials even though it grants no
+        // authority over the account. The send path never logs one deliberately;
+        // this is the guard against a future log line that forgets.
+        'token',
+        '*.token',
+        'privateKey',
+        '*.privateKey',
         'tokenHash',
         '*.tokenHash',
         'pinHash',
