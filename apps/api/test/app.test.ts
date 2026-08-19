@@ -28,6 +28,7 @@ const config: AppConfig = {
   databasePoolMax: 1,
   databaseConnectionTimeoutMs: 100,
   logLevel: 'silent',
+  firebaseServiceAccount: null,
 };
 
 describe('GET /health/live', () => {

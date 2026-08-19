@@ -52,6 +52,7 @@ const config: AppConfig = {
   databasePoolMax: 10,
   databaseConnectionTimeoutMs: 5000,
   logLevel: 'silent',
+  firebaseServiceAccount: null,
 };
 
 const prisma = createPrismaClient(config);

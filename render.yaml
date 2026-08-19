@@ -111,6 +111,18 @@ services:
       - key: LOG_LEVEL
         value: info
 
+      # Base64 of the Firebase service-account JSON, which lets the API send
+      # push messages so the other member's changes arrive in seconds instead of
+      # waiting for the client's fifteen-minute poll. Base64 because the
+      # private key inside contains newlines and a dashboard field mangles them.
+      #
+      # Optional. Unset, the API starts normally, logs that push is disabled
+      # once, and every mutation still succeeds — clients simply fall back to
+      # polling. Rotating it in the Firebase console requires pasting the new
+      # value here; no code or database change is involved.
+      - key: FIREBASE_SERVICE_ACCOUNT_BASE64
+        sync: false
+
       # HOUSEHOLD_SLUG, HOUSEHOLD_NAME, SUMON_INITIAL_PIN, and
       # EBRAHIM_INITIAL_PIN are intentionally not declared. Provisioning is an
       # explicit one-off action; adding those PINs here would re-hash them on

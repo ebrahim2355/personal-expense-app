@@ -37,7 +37,58 @@ const rawEnvironmentSchema = z.object({
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
     .default('info'),
+  // Optional on purpose: with no credential the API starts, serves every route,
+  // and simply never sends a push, which is exactly the behaviour that shipped
+  // before push existed. Base64 rather than raw JSON because the private key
+  // contains newlines, and a dashboard text field mangles those.
+  FIREBASE_SERVICE_ACCOUNT_BASE64: z.string().optional(),
 });
+
+/// The three fields `firebase-admin` needs to authenticate as our project. Held
+/// as a parsed object rather than the raw JSON so a malformed credential fails
+/// at startup, where it is one clear log line, instead of at the first send,
+/// where it would be a silent notification that never arrived.
+export interface FirebaseServiceAccount {
+  projectId: string;
+  clientEmail: string;
+  privateKey: string;
+}
+
+const serviceAccountSchema = z.object({
+  project_id: z.string().min(1),
+  client_email: z.string().min(1),
+  private_key: z.string().min(1),
+});
+
+function parseServiceAccount(encoded: string): FirebaseServiceAccount {
+  // `Buffer.from(…, 'base64')` never throws — it drops characters outside the
+  // alphabet — so malformed base64 surfaces here as unparseable JSON rather
+  // than as a decode error. One message covers both, because from the operator's
+  // side they are the same mistake: the value pasted was not the encoded file.
+  let document: unknown;
+  try {
+    document = JSON.parse(
+      Buffer.from(encoded, 'base64').toString('utf8'),
+    ) as unknown;
+  } catch {
+    throw new Error(
+      'FIREBASE_SERVICE_ACCOUNT_BASE64 must be base64-encoded service account JSON.',
+    );
+  }
+
+  const parsed = serviceAccountSchema.safeParse(document);
+  if (!parsed.success) {
+    throw new Error(
+      'FIREBASE_SERVICE_ACCOUNT_BASE64 must contain project_id, client_email, and private_key.',
+    );
+  }
+
+  return {
+    projectId: parsed.data.project_id,
+    clientEmail: parsed.data.client_email,
+    privateKey: parsed.data.private_key,
+  };
+}
 
 export interface AppConfig {
   nodeEnv: 'development' | 'test' | 'production';
@@ -59,6 +110,9 @@ export interface AppConfig {
   databasePoolMax: number;
   databaseConnectionTimeoutMs: number;
   logLevel: string;
+  /// Null when no credential is configured, which disables push and leaves the
+  /// client on background polling alone.
+  firebaseServiceAccount: FirebaseServiceAccount | null;
 }
 
 export function loadConfig(
@@ -122,5 +176,10 @@ export function loadConfig(
     databasePoolMax: parsed.DATABASE_POOL_MAX,
     databaseConnectionTimeoutMs: parsed.DATABASE_CONNECTION_TIMEOUT_MS,
     logLevel: parsed.LOG_LEVEL,
+    firebaseServiceAccount:
+      parsed.FIREBASE_SERVICE_ACCOUNT_BASE64 === undefined ||
+      parsed.FIREBASE_SERVICE_ACCOUNT_BASE64.trim().length === 0
+        ? null
+        : parseServiceAccount(parsed.FIREBASE_SERVICE_ACCOUNT_BASE64.trim()),
   };
 }
