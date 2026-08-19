@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:drift/drift.dart';
 import 'package:flutter/services.dart';
+import 'package:houseexpenses/src/application/push_registration.dart';
 import 'package:houseexpenses/src/background/background_work_policy.dart';
 import 'package:houseexpenses/src/data/local/app_database.dart';
 import 'package:houseexpenses/src/data/remote/api_client.dart';
@@ -10,6 +11,7 @@ import 'package:houseexpenses/src/data/remote/http_transport.dart';
 import 'package:houseexpenses/src/domain/expense.dart';
 import 'package:houseexpenses/src/notifications/household_activity_notifier.dart';
 import 'package:houseexpenses/src/notifications/notification_permissions.dart';
+import 'package:houseexpenses/src/notifications/push_messaging.dart';
 
 typedef PushHandler = Future<List<MutationResultDto>> Function(
   List<MutationCandidateDto> mutations,
@@ -203,6 +205,86 @@ final class FakeBackgroundWorkPolicy implements BackgroundWorkPolicy {
     if (unavailable) {
       throw MissingPluginException('No handler for the policy channel.');
     }
+  }
+}
+
+/// Stands in for Play Services, with the same mutable-knob shape as
+/// [FakeNotificationPermissions].
+final class FakePushMessaging implements PushMessaging {
+  FakePushMessaging({this.token = 'fcm-token', this.available = true});
+
+  /// The token Google would hand back, or null when this install has none.
+  String? token;
+
+  /// Whether the messaging platform answers at all. False models a phone with no
+  /// Play Services or a build with no `google-services.json`, which must leave
+  /// the app fully working on the background poll.
+  bool available;
+
+  int tokenCalls = 0;
+
+  final StreamController<String> refreshes =
+      StreamController<String>.broadcast();
+  final StreamController<void> pushes = StreamController<void>.broadcast();
+
+  @override
+  Future<String?> currentToken() async {
+    tokenCalls += 1;
+    // Null rather than a throw, matching FirebasePushMessaging, which swallows
+    // its own platform failures.
+    return available ? token : null;
+  }
+
+  @override
+  Stream<String> get tokenRefreshes => refreshes.stream;
+
+  @override
+  Stream<void> get foregroundMessages => pushes.stream;
+
+  Future<void> close() async {
+    await refreshes.close();
+    await pushes.close();
+  }
+}
+
+/// Records what the API was told about this device, and can be made to fail the
+/// way an offline phone or a rejected token does.
+final class FakeDeviceRegistrationApi implements DeviceRegistrationApi {
+  final List<String> registered = <String>[];
+  final List<String> unregistered = <String>[];
+
+  /// Thrown by both calls when set, standing in for any non-2xx response.
+  Object? failure;
+
+  @override
+  Future<void> register(String token) async {
+    if (failure != null) {
+      throw failure!;
+    }
+    registered.add(token);
+  }
+
+  @override
+  Future<void> unregister(String token) async {
+    if (failure != null) {
+      throw failure!;
+    }
+    unregistered.add(token);
+  }
+}
+
+/// Counts the sign-outs that reached push registration, and can note when, which
+/// is what lets a test assert the call happened before the tokens were revoked.
+final class RecordingDeviceDeregistration implements DeviceDeregistration {
+  RecordingDeviceDeregistration({this.onUnregister});
+
+  final void Function()? onUnregister;
+  int calls = 0;
+
+  @override
+  Future<void> unregister() async {
+    calls += 1;
+    onUnregister?.call();
   }
 }
 
