@@ -2,6 +2,7 @@ import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 
 import type { AuthService } from '../src/application/auth-service.js';
+import type { DeviceService } from '../src/application/device-service.js';
 import type { SyncService } from '../src/application/sync-service.js';
 import { createApp } from '../src/app.js';
 import type { AppConfig } from '../src/config/env.js';
@@ -38,6 +39,7 @@ describe('GET /health/live', () => {
       prisma: {} as DatabaseClient,
       authService: {} as AuthService,
       syncService: {} as SyncService,
+      deviceService: {} as DeviceService,
       logger: createLogger(config),
     });
     const response = await request(app).get('/health/live');

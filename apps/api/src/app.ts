@@ -3,6 +3,7 @@ import express, { type Express, type RequestHandler } from 'express';
 import helmet from 'helmet';
 
 import type { AuthService } from './application/auth-service.js';
+import type { DeviceService } from './application/device-service.js';
 import type { SyncService } from './application/sync-service.js';
 import type { AppConfig } from './config/env.js';
 import { AppError } from './domain/errors.js';
@@ -17,6 +18,7 @@ export interface AppDependencies {
   prisma: DatabaseClient;
   authService: AuthService;
   syncService: SyncService;
+  deviceService: DeviceService;
   logger: AppLogger;
 }
 

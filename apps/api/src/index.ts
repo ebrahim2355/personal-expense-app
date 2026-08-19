@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { createServer } from 'node:http';
 
 import { AuthService } from './application/auth-service.js';
+import { DeviceService } from './application/device-service.js';
 import {
   disabledActivityNotifier,
   PushActivityNotifier,
@@ -41,7 +42,15 @@ const activityNotifier =
     ? disabledActivityNotifier
     : new PushActivityNotifier(prisma, pushSender, logger);
 const syncService = new SyncService(prisma, tokenService, activityNotifier);
-const app = createApp({ config, prisma, authService, syncService, logger });
+const deviceService = new DeviceService(prisma, tokenService);
+const app = createApp({
+  config,
+  prisma,
+  authService,
+  syncService,
+  deviceService,
+  logger,
+});
 const server = createServer(app);
 let shuttingDown = false;
 

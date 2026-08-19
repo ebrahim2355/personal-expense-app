@@ -2,12 +2,15 @@ import { Router, type RequestHandler } from 'express';
 import { rateLimit } from 'express-rate-limit';
 
 import type { AuthService } from '../application/auth-service.js';
+import type { DeviceService } from '../application/device-service.js';
 import type { SyncService } from '../application/sync-service.js';
 import type { AppConfig } from '../config/env.js';
 import { AppError } from '../domain/errors.js';
 import {
   bootstrapQuerySchema,
   changesQuerySchema,
+  deviceRegistrationSchema,
+  deviceUnregistrationSchema,
   loginSchema,
   logoutSchema,
   mutationEnvelopeSchema,
@@ -27,6 +30,7 @@ interface RouteDependencies {
   prisma: DatabaseClient;
   authService: AuthService;
   syncService: SyncService;
+  deviceService: DeviceService;
   logger: AppLogger;
 }
 
@@ -64,6 +68,15 @@ export function createRouter(dependencies: RouteDependencies): Router {
     dependencies.config,
     dependencies.config.authRateLimitMax,
     'AUTH_RATE_LIMITED',
+  );
+  // A separate limiter instance, not a second use of `authLimiter`, so that a
+  // phone re-registering its push token can never spend the budget that a
+  // sign-in needs. The bound itself is borrowed from auth because the shape of
+  // the traffic is the same: a handful of calls per launch, never a stream.
+  const deviceLimiter = limiter(
+    dependencies.config,
+    dependencies.config.authRateLimitMax,
+    'DEVICE_RATE_LIMITED',
   );
 
   router.get('/health/live', (_request, response) => {
@@ -139,6 +152,52 @@ export function createRouter(dependencies: RouteDependencies): Router {
         authenticatedMember(response),
       );
       response.status(200).json({ member });
+    }),
+  );
+
+  router.post(
+    '/v1/devices',
+    authRequired,
+    deviceLimiter,
+    asyncHandler(async (request, response) => {
+      const input = deviceRegistrationSchema.parse(unknownBody(request));
+      const identity = authenticatedMember(response);
+      await dependencies.deviceService.register(
+        identity,
+        input.token,
+        input.platform,
+      );
+      // The platform and the member, never the token. The value is enough to
+      // send this phone a notification, so it stays out of the logs even though
+      // it grants no authority over the account.
+      dependencies.logger.info(
+        {
+          requestId: response.locals.requestId as string,
+          memberKey: identity.memberKey,
+          platform: input.platform,
+        },
+        'push device registered',
+      );
+      response.status(204).send();
+    }),
+  );
+
+  router.post(
+    '/v1/devices/unregister',
+    authRequired,
+    deviceLimiter,
+    asyncHandler(async (request, response) => {
+      const input = deviceUnregistrationSchema.parse(unknownBody(request));
+      const identity = authenticatedMember(response);
+      await dependencies.deviceService.unregister(identity, input.token);
+      dependencies.logger.info(
+        {
+          requestId: response.locals.requestId as string,
+          memberKey: identity.memberKey,
+        },
+        'push device unregistered',
+      );
+      response.status(204).send();
     }),
   );
 

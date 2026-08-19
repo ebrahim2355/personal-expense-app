@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AuthService } from '../../src/application/auth-service.js';
+import { DeviceService } from '../../src/application/device-service.js';
 import {
   SyncService,
   lockHouseholdWrites,
@@ -61,11 +62,13 @@ const tokenService = new TokenService(config);
 const authService = new AuthService(prisma, tokenService, config);
 const activityNotifier = new RecordingActivityNotifier();
 const syncService = new SyncService(prisma, tokenService, activityNotifier);
+const deviceService = new DeviceService(prisma, tokenService);
 const app = createApp({
   config,
   prisma,
   authService,
   syncService,
+  deviceService,
   logger: createLogger(config),
 });
 
