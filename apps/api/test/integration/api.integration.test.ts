@@ -18,6 +18,7 @@ import { Prisma } from '../../src/generated/prisma/client.js';
 import { createLogger } from '../../src/infrastructure/logger.js';
 import { createPrismaClient } from '../../src/infrastructure/prisma.js';
 import { TokenService } from '../../src/infrastructure/token-service.js';
+import { RecordingActivityNotifier } from '../support/fake-push.js';
 import { checkedTestDatabaseUrl } from '../support/test-database.js';
 
 const checkedDatabaseUrl = checkedTestDatabaseUrl(
@@ -58,7 +59,8 @@ const config: AppConfig = {
 const prisma = createPrismaClient(config);
 const tokenService = new TokenService(config);
 const authService = new AuthService(prisma, tokenService, config);
-const syncService = new SyncService(prisma, tokenService);
+const activityNotifier = new RecordingActivityNotifier();
+const syncService = new SyncService(prisma, tokenService, activityNotifier);
 const app = createApp({
   config,
   prisma,
@@ -507,6 +509,7 @@ integration('PostgreSQL API integration', () => {
 
   beforeEach(async () => {
     await clearMutableData();
+    activityNotifier.reset();
     openPeriodId = await openPrimaryPeriod();
   });
 

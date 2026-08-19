@@ -23,6 +23,7 @@ import type {
   BootstrapPosition,
   TokenService,
 } from '../infrastructure/token-service.js';
+import type { HouseholdActivityNotifier } from './push-notifier.js';
 
 const expenseWithPayer = {
   payer: {
@@ -389,6 +390,7 @@ export class SyncService {
   public constructor(
     private readonly prisma: DatabaseClient,
     private readonly tokens: TokenService,
+    private readonly activity: HouseholdActivityNotifier,
   ) {}
 
   public async applyMutations(
@@ -396,6 +398,11 @@ export class SyncService {
     mutations: MutationBase[],
   ): Promise<MutationResult[]> {
     const results: MutationResult[] = [];
+    // The mutation ids answered from a stored receipt instead of by writing. A
+    // replay returns the APPLIED result the client already saw, so the status
+    // alone cannot tell a change that just landed from one being re-uploaded
+    // after a lost response.
+    const replays = new Set<string>();
 
     for (const mutation of mutations) {
       const parsed = parsedMutationSchema.safeParse(mutation);
@@ -416,8 +423,29 @@ export class SyncService {
           parsed.success ? parsed.data : undefined,
           invalidResult,
           hash,
+          replays,
         ),
       );
+    }
+
+    // Only a change that actually landed is worth waking a phone for. A batch
+    // replayed after a flaky upload, or one rejected outright, adds nothing to
+    // the change feed, so there is nothing for the other device to come and
+    // fetch.
+    const landed = results.some(
+      (result) =>
+        result.status === 'APPLIED' && !replays.has(result.mutationId),
+    );
+    if (landed) {
+      // Fired here rather than inside the transaction, and deliberately not
+      // awaited: every write above has committed, so the response owes the
+      // client nothing more, and the round trip to Google must not be added to
+      // the time the phone spends waiting to sync.
+      void this.activity.notifyOtherMembers(identity).catch(() => {
+        // Unreachable unless the notifier itself has a bug — it already logs and
+        // swallows every send failure. This is the backstop that keeps such a bug
+        // from becoming an unhandled rejection and taking the process down.
+      });
     }
 
     return results;
@@ -591,6 +619,7 @@ export class SyncService {
     mutation: ParsedMutation | undefined,
     invalidResult: MutationResult | undefined,
     hash: string,
+    replays: Set<string>,
   ): Promise<MutationResult> {
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
@@ -603,6 +632,7 @@ export class SyncService {
               mutation,
               invalidResult,
               hash,
+              replays,
             ),
           { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
         );
@@ -617,6 +647,7 @@ export class SyncService {
             base,
             hash,
             mutation?.entityType ?? base.entityType ?? 'EXPENSE',
+            replays,
           );
         }
         throw error;
@@ -637,6 +668,7 @@ export class SyncService {
     mutation: ParsedMutation | undefined,
     invalidResult: MutationResult | undefined,
     hash: string,
+    replays: Set<string>,
   ): Promise<MutationResult> {
     await lockHouseholdWrites(transaction, identity.householdId);
 
@@ -647,6 +679,9 @@ export class SyncService {
       },
     });
     if (receipt !== null) {
+      // Answered from the receipt, so the change feed did not grow and the other
+      // phone has nothing new to fetch.
+      replays.add(base.mutationId);
       return receipt.requestHash === hash
         ? mutationResultSchema.parse(receipt.result)
         : {
@@ -1569,6 +1604,7 @@ export class SyncService {
     mutation: MutationBase,
     hash: string,
     entityType: SyncEntityType,
+    replays: Set<string>,
   ): Promise<MutationResult> {
     const receipt = await this.prisma.processedMutation.findFirst({
       where: {
@@ -1577,6 +1613,9 @@ export class SyncService {
       },
     });
     if (receipt !== null) {
+      // Two copies of one upload raced and the other won. This one wrote
+      // nothing, so it is a replay like any other.
+      replays.add(mutation.mutationId);
       return receipt.requestHash === hash
         ? mutationResultSchema.parse(receipt.result)
         : {

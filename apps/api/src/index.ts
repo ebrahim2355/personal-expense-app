@@ -3,11 +3,16 @@ import 'dotenv/config';
 import { createServer } from 'node:http';
 
 import { AuthService } from './application/auth-service.js';
+import {
+  disabledActivityNotifier,
+  PushActivityNotifier,
+} from './application/push-notifier.js';
 import { SyncService } from './application/sync-service.js';
 import { createApp } from './app.js';
 import { loadConfig } from './config/env.js';
 import { createLogger } from './infrastructure/logger.js';
 import { createPrismaClient } from './infrastructure/prisma.js';
+import { createPushSender } from './infrastructure/push-sender.js';
 import { TokenService } from './infrastructure/token-service.js';
 
 const config = loadConfig();
@@ -15,7 +20,27 @@ const logger = createLogger(config);
 const prisma = createPrismaClient(config);
 const tokenService = new TokenService(config);
 const authService = new AuthService(prisma, tokenService, config);
-const syncService = new SyncService(prisma, tokenService);
+
+// Announced once at startup rather than per mutation. Without a credential the
+// API is fully functional and simply never wakes a phone, so the only way to
+// tell that state from a broken send is to say so here.
+const pushSender = createPushSender(config.firebaseServiceAccount);
+if (pushSender === null) {
+  logger.warn(
+    'push disabled: FIREBASE_SERVICE_ACCOUNT_BASE64 is not configured, clients rely on background polling',
+  );
+} else {
+  logger.info(
+    { projectId: config.firebaseServiceAccount?.projectId },
+    'push enabled',
+  );
+}
+
+const activityNotifier =
+  pushSender === null
+    ? disabledActivityNotifier
+    : new PushActivityNotifier(prisma, pushSender, logger);
+const syncService = new SyncService(prisma, tokenService, activityNotifier);
 const app = createApp({ config, prisma, authService, syncService, logger });
 const server = createServer(app);
 let shuttingDown = false;
