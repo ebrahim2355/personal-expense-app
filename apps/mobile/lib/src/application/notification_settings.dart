@@ -33,17 +33,18 @@ final class NotificationSettings {
   bool get willNotify => systemEnabled && householdActivityEnabled;
 }
 
-/// Owns the notification preferences and the two one-time platform asks.
+/// Owns the notification preferences, the one-time permission ask, and the
+/// battery-optimization controls Settings offers.
 ///
 /// Separate from the presenter because these are two different concerns: the
 /// presenter talks to the platform, this decides when to and remembers what the
 /// member chose.
 ///
-/// The battery-optimization ask lives here rather than alongside the scheduler
-/// because it is the same shape as the permission ask — check the live platform
-/// answer, ask at most once, record it — and because it exists only to serve
-/// notification timeliness. That is a deliberate widening of this class, not
-/// drift.
+/// The battery-optimization calls live here rather than alongside the scheduler
+/// because they exist only to serve notification timeliness. Unlike the
+/// permission ask they are never made on the app's own initiative: Settings
+/// offers them when Android is measurably throttling background work, and the
+/// member decides. That is a deliberate widening of this class, not drift.
 final class NotificationSettingsController {
   NotificationSettingsController({
     required this._database,
@@ -99,41 +100,6 @@ final class NotificationSettingsController {
     }
   }
 
-  /// Asks Android to exempt this app from battery optimization, at most once.
-  ///
-  /// Gated on the live platform answer first, so an install that already has the
-  /// exemption is never nagged and one that was granted it outside the app
-  /// self-heals. Unlike the notification dialog this one can be re-shown at will,
-  /// so the stored timestamp exists to avoid pestering the member on every
-  /// launch, not to ration a single chance.
-  ///
-  /// A dialog that never launched is not recorded. Recording it would spend the
-  /// ask on something nobody saw — the same mistake that left the notification
-  /// permission permanently unasked.
-  Future<void> ensureBackgroundExemption() async {
-    try {
-      if (await _policy.isExemptFromBatteryOptimization()) {
-        return;
-      }
-      final metadata = await _database.readSyncMetadata();
-      if (metadata.batteryExemptionRequestedAt != null) {
-        return;
-      }
-      if (!await _policy.requestBatteryExemption()) {
-        return;
-      }
-      await _write(
-        SyncMetadataCompanion(
-          batteryExemptionRequestedAt: Value<DateTime>(_clock()),
-        ),
-      );
-    } on Object {
-      // Same contract as the permission ask: startup must survive a platform
-      // that cannot answer. The cost is late notifications, which is where this
-      // device already was.
-    }
-  }
-
   Future<NotificationSettings> read() async {
     final metadata = await _database.readSyncMetadata();
     return NotificationSettings(
@@ -143,9 +109,18 @@ final class NotificationSettingsController {
     );
   }
 
-  /// Shows Android's battery-optimization dialog on demand, for the Settings
-  /// button. Reports whether a dialog appeared; the member's answer only shows up
-  /// in a later [read].
+  /// Shows Android's battery-optimization request on demand, for the Settings
+  /// button. The only way this app ever asks for the exemption.
+  ///
+  /// Nothing is recorded. Unlike the notification dialog this one can be
+  /// re-shown at will, so there is no single chance to ration, and the live
+  /// platform answer read by [read] is the whole truth — an install granted the
+  /// exemption outside the app reports it correctly without having been asked
+  /// here at all.
+  ///
+  /// Reports whether a screen actually appeared, which is false on OEM builds
+  /// that have removed the activity. The member's answer only shows up in a later
+  /// [read]: Android reports that its screen opened, never what was chosen there.
   Future<bool> requestBatteryExemption() => _policy.requestBatteryExemption();
 
   /// Opens this app's page in Android Settings, for the states no dialog can fix.

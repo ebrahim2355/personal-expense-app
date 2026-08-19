@@ -184,14 +184,18 @@ final appStartupProvider = FutureProvider<void>((ref) async {
   // Before sync starts, and regardless of sign-in state: the ask belongs to the
   // first open after install, which is often the sign-in screen. It never
   // throws, so a denial or an unavailable platform cannot block startup.
+  //
+  // The only thing startup asks for. The battery-optimization exemption used to
+  // follow it immediately, which meant a fresh install put two system screens in
+  // front of a member who had not yet seen the app — and on this phone the second
+  // is not a yes/no dialog but a whole Battery details screen whose correct
+  // answer is not the recommended one. It is now offered from Settings by the
+  // advisory that appears exactly when Android is measurably deferring this app's
+  // background work, so the request arrives with its reason attached instead of
+  // ahead of it.
   await ref
       .watch(notificationSettingsControllerProvider)
       .ensureNotificationPermission();
-  // Immediately after, and in this order deliberately: allow notifications
-  // first, then keep them timely. Also never throws.
-  await ref
-      .watch(notificationSettingsControllerProvider)
-      .ensureBackgroundExemption();
   // Before the sync triggers, so a device that is already signed in registers on
   // this launch rather than on the next one. It never throws either: a phone
   // without Play Services simply keeps the polling it already had.

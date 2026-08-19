@@ -133,86 +133,27 @@ void main() {
     },
   );
 
-  test(
-    'does not ask for the exemption when Android already grants it',
-    () async {
-      final policy = FakeBackgroundWorkPolicy(exempt: true);
-
-      await controllerWith(
-        FakeNotificationPermissions(),
-        policy: policy,
-      ).ensureBackgroundExemption();
-
-      expect(policy.requestCalls, 0);
-      expect(await storedExemptionAskedAt(), isNull);
-    },
-  );
-
-  test('asks for the exemption on first open and records the ask', () async {
+  test('the exemption is offered, never asked for unprompted', () async {
     final policy = FakeBackgroundWorkPolicy();
-
-    await controllerWith(
-      FakeNotificationPermissions(),
-      policy: policy,
-    ).ensureBackgroundExemption();
-
-    expect(policy.requestCalls, 1);
-    expect(await storedExemptionAskedAt(), DateTime.utc(2026, 8, 18, 12));
-  });
-
-  test('a dialog that never launched is not recorded and is retried', () async {
-    // Some OEM builds remove the activity. Recording that as an ask would spend
-    // the one prompt on something the member never saw.
-    final policy = FakeBackgroundWorkPolicy(canLaunchDialog: false);
     final controller = controllerWith(
-      FakeNotificationPermissions(),
+      FakeNotificationPermissions(enabled: false, grants: true),
       policy: policy,
     );
 
-    await controller.ensureBackgroundExemption();
+    // The one ask a launch makes. It must not drag the battery screen along with
+    // it: a fresh install would then open two system screens before showing
+    // anything of its own, and on this phone the second is a Battery details
+    // screen rather than a dialog.
+    await controller.ensureNotificationPermission();
 
-    expect(policy.requestCalls, 1);
+    expect(policy.requestCalls, 0);
     expect(await storedExemptionAskedAt(), isNull);
 
-    policy.canLaunchDialog = true;
-    await controller.ensureBackgroundExemption();
-
-    expect(policy.requestCalls, 2);
-    expect(await storedExemptionAskedAt(), DateTime.utc(2026, 8, 18, 12));
-  });
-
-  test('a recorded ask is never repeated on a later launch', () async {
-    final policy = FakeBackgroundWorkPolicy();
-    final permissions = FakeNotificationPermissions();
-
-    await controllerWith(
-      permissions,
-      policy: policy,
-    ).ensureBackgroundExemption();
-
-    final firstAsk = await storedExemptionAskedAt();
-    expect(firstAsk, DateTime.utc(2026, 8, 18, 12));
-
-    // Unlike the notification dialog this one would reappear every launch, so
-    // the stored timestamp is what stops the app from nagging a member who
-    // declined.
-    await controllerWith(
-      permissions,
-      policy: policy,
-      now: DateTime.utc(2026, 8, 19, 9),
-    ).ensureBackgroundExemption();
+    // The Settings button is the whole path, and it records nothing: this ask can
+    // be re-shown, so the live platform answer is the only state worth keeping.
+    expect(await controller.requestBatteryExemption(), isTrue);
 
     expect(policy.requestCalls, 1);
-    expect(await storedExemptionAskedAt(), firstAsk);
-  });
-
-  test('an unavailable channel neither throws nor records an ask', () async {
-    final controller = controllerWith(
-      FakeNotificationPermissions(),
-      policy: FakeBackgroundWorkPolicy(unavailable: true),
-    );
-
-    await expectLater(controller.ensureBackgroundExemption(), completes);
     expect(await storedExemptionAskedAt(), isNull);
   });
 
