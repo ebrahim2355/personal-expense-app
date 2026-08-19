@@ -1,33 +1,38 @@
-<!-- Status-bar icon for household-activity notifications, and the app's mark.
+<!-- Status-bar icon for household-activity notifications: the app icon's mark.
 
      Android draws a notification small icon from its alpha channel alone and
      tints the result, so this must be a flat white-on-transparent silhouette.
      Pointing the plugin at @mipmap/ic_launcher instead would render as a solid
-     white blob on Android 5+, which is why this exists as its own drawable
-     rather than reusing the launcher artwork.
+     white blob on Android 5+ — the launcher art is a full-colour bitmap whose
+     alpha is one opaque square. That is the whole reason the same mark has to be
+     drawn twice: once in colour for the home screen, once as a silhouette here.
 
-     The mark is a house whose lower half is a receipt with a torn bottom edge:
-     the roof says household, the tear says expense. A plain receipt read as a
-     generic document, and a generic status-bar icon is indistinguishable from
-     every other app's.
+     The mark is the launcher icon's, traced from mipmap-xxxhdpi/ic_launcher.png
+     rather than redrawn, which is why the viewport is 192 and not the usual 24 —
+     these are that bitmap's own pixel coordinates, so the two cannot drift apart
+     through a rounding choice. Every edge is either horizontal or exactly 45
+     degrees, and the two chevrons are disjoint: the 29-unit diagonal gap between
+     them is the mark's most recognisable feature and the first thing that would
+     close up if the silhouette were drawn by eye.
 
-     One outer subpath traces the whole silhouette — right roof slope, eave,
-     body, tear, left eave, closing left slope — and two inner subpaths that
-     evenOdd carves back out as the printed lines. evenOdd rather than winding
-     order so the holes do not depend on the direction each rectangle happens to
-     be drawn in; supported from API 24, which is this app's minSdk.
+     The group scales by five sixths about the canvas centre, which insets the
+     mark to roughly 19 of 24dp. A notification icon that fills its viewport
+     edge to edge sits taller than the platform's own icons in the same row.
 
-     ic_launcher_foreground.xml repeats this path data at launcher scale. Vector
-     drawables cannot share a path between files, so the two are kept in sync by
-     hand: change one, change the other, or the app icon and the notification it
-     posts stop being the same mark. -->
+     No fillType: neither subpath has a hole, so the default winding rule is
+     enough and evenOdd would only be noise. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:viewportWidth="24"
-    android:viewportHeight="24">
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:fillType="evenOdd"
-        android:pathData="M12,1.6 L22,9.6 L19,9.6 L19,22.4 L17.25,19.9 L15.5,22.4 L13.75,19.9 L12,22.4 L10.25,19.9 L8.5,22.4 L6.75,19.9 L5,22.4 L5,9.6 L2,9.6 Z M7.6,12.4 L16.4,12.4 L16.4,14 L7.6,14 Z M7.6,16.4 L13.4,16.4 L13.4,18 L7.6,18 Z" />
+    android:viewportWidth="192"
+    android:viewportHeight="192">
+    <group
+        android:scaleX="0.83333"
+        android:scaleY="0.83333"
+        android:translateX="16"
+        android:translateY="16">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M113.5,3.5 L169.5,3.5 L49.5,123.5 L21.5,95.5 Z M113.5,88.5 L169.5,88.5 L120,138 L169.5,187.5 L113.5,187.5 L64,138 Z" />
+    </group>
 </vector>
