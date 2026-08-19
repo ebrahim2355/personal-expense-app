@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The launcher icon's background layer. This is the app's own seed colour from
+     lib/src/presentation/app.dart, so the icon on the home screen and the first
+     screen it opens are the same green rather than two unrelated ones. -->
+<resources>
+    <color name="ic_launcher_background">#FF006B5B</color>
+</resources>

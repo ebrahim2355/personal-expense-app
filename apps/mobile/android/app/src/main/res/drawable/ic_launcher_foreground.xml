@@ -1,0 +1,31 @@
+<!-- Launcher foreground: the same mark ic_stat_notification.xml draws.
+
+     The notification and the icon it appears under have to be recognisably the
+     same object, so this is that path data at launcher scale rather than a
+     second drawing. Vector drawables cannot share a path between files — change
+     one and change the other.
+
+     Adaptive icons are a 108dp canvas of which only the inner 72dp is guaranteed
+     visible; launchers mask the rest to whatever shape they use. The group
+     scales the 24dp mark by 2.6 and centres it, which lands it inside that safe
+     zone with room to spare, so no launcher shape can clip the roof or the tear.
+
+     White, not the brand colour: this layer sits on the teal background below it,
+     and Android 13+ also reuses it as the monochrome themed icon, where the
+     system supplies its own tint. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="2.6"
+        android:scaleY="2.6"
+        android:translateX="22.8"
+        android:translateY="22.8">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M12,1.6 L22,9.6 L19,9.6 L19,22.4 L17.25,19.9 L15.5,22.4 L13.75,19.9 L12,22.4 L10.25,19.9 L8.5,22.4 L6.75,19.9 L5,22.4 L5,9.6 L2,9.6 Z M7.6,12.4 L16.4,12.4 L16.4,14 L7.6,14 Z M7.6,16.4 L13.4,16.4 L13.4,18 L7.6,18 Z" />
+    </group>
+</vector>
