@@ -22,10 +22,12 @@ All values are in Bangladeshi taka (BDT). The stored unit is integer poisha (`10
 - Offline use after the first successful login/bootstrap, immediate local updates, manual refresh, and automatic/best-effort sync triggers.
 - A visible but unobtrusive offline/pending state and a brief message when a conflict is resolved with server data.
 - An Android notification when a sync brings in an expense, loan, or spending-period change the other member made, including while the app is closed, with the notification permission requested on first open after install and a Settings switch to turn the announcements off.
+- Near-instant delivery of those notifications: the API sends a content-free push the moment a change lands, and background polling remains the backstop for a push that was never sent, never delivered, or arrived while the phone was offline.
 
 ### Out of scope
 
 - Budgets, configurable split percentages, receipts, recurring expenses, bank integrations, iOS, web administration, public registration, additional members, and additional households.
+- Server-composed notification content. A push carries no amount, note, or member name, so the system tray never draws one; the app composes every notification from its own database after syncing.
 - Sub-taka amounts, decimal amount entry, and any currency other than BDT.
 - Reopening a closed spending period, deleting a spending period, and more than one open spending period at a time.
 - Interest, repayment schedules, or partial-repayment tracking on lending entries; a settled loan is edited or deleted by hand.
@@ -98,10 +100,11 @@ The lending ledger is entirely manual. Nothing repays, ages, or clears an entry 
 - As a member, I see the household's open spending period rather than a calendar month.
 - As a member, I can see total spend, each member's paid amount, each member's allocated share, and a single settlement statement for that period.
 - As a member, I can manually refresh and see whether changes are pending or the app is offline.
-- As a member, I benefit from sync attempts on launch, foreground resume, after a mutation, manual refresh, network recovery while the app is alive, and best-effort Android background work.
+- As a member, I benefit from sync attempts on launch, foreground resume, after a mutation, manual refresh, network recovery while the app is alive, an arriving push, and best-effort Android background work.
 - As a member, I am notified on my phone when a sync brings in something the other member added, edited, or deleted, even if the app is closed at the time.
+- As a member, I expect that notification within seconds rather than at the next background poll, without leaving the app open to get it.
 
-Android may defer or suppress background work because of battery, network, vendor, and OS policies. The product must not promise instant background synchronization; foreground and manual sync remain authoritative user paths.
+Android may defer or suppress background work because of battery, network, vendor, and OS policies. The product must not promise instant background synchronization; foreground and manual sync remain authoritative user paths. Notifications ride along with a sync, so they inherit exactly that timing. A push shortens the usual case to seconds, but it is delivered by Google to a phone that must be online to receive it, so "near-instant" is typical rather than guaranteed and the background poll stays as the backstop.
 
 ## 5. Screens and behavior
 
@@ -190,9 +193,12 @@ Android may defer or suppress background work because of battery, network, vendo
 - A sync that applies a change the other member made posts one Android notification per change, naming the author and the operation in the title and the details in the body: amount, category, note, and the payer when the payer is not the author for an expense; the "who owes whom" summary and the note for a loan; the period name for an open or a close.
 - More than one change in a single sync groups the individual notifications under one summary.
 - Notifications post whether the app is closed, backgrounded, or in the foreground.
+- A change the other member made triggers a push, so the receiving phone syncs and announces within seconds instead of waiting for its next background poll. The push carries no detail — no amount, note, or member name — and only tells the app to sync; every notification is still composed from the device's own database, which is why the switch above and the own-change rule below keep applying unchanged.
+- Settings shows whether a push has ever woken this device, and when the most recent one arrived. That is the only way to tell a working push from a well-timed poll.
 - A member is never notified about their own change, including when it arrives back through the change feed after being acknowledged, and a first-install bootstrap notifies about nothing at all.
 - Settings offers a switch for household activity announcements and — when Android is blocking notifications — says so, explains how to re-enable them in Android Settings, and offers a re-check. Android does not re-show its permission dialog, so the app never claims it can ask again.
 - Turning the switch off silences announcements only; sync keeps running exactly as before.
+- Signing out stops this phone from being woken, and push is never a precondition: a phone without working Google Play services, or an API with no push credential configured, behaves exactly as it did before push existed.
 
 ## 6. Entity fields and validation
 
