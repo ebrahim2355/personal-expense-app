@@ -21,10 +21,11 @@ All values are in Bangladeshi taka (BDT). The stored unit is integer poisha (`10
 - A separate lending ledger of hand-recorded loans between the two members, with its own net total, its own search, and add/edit/delete.
 - Offline use after the first successful login/bootstrap, immediate local updates, manual refresh, and automatic/best-effort sync triggers.
 - A visible but unobtrusive offline/pending state and a brief message when a conflict is resolved with server data.
+- An Android notification when a sync brings in an expense, loan, or spending-period change the other member made, including while the app is closed, with the notification permission requested on first open after install and a Settings switch to turn the announcements off.
 
 ### Out of scope
 
-- Budgets, configurable split percentages, receipts, notifications, recurring expenses, bank integrations, iOS, web administration, public registration, additional members, and additional households.
+- Budgets, configurable split percentages, receipts, recurring expenses, bank integrations, iOS, web administration, public registration, additional members, and additional households.
 - Sub-taka amounts, decimal amount entry, and any currency other than BDT.
 - Reopening a closed spending period, deleting a spending period, and more than one open spending period at a time.
 - Interest, repayment schedules, or partial-repayment tracking on lending entries; a settled loan is edited or deleted by hand.
@@ -98,6 +99,7 @@ The lending ledger is entirely manual. Nothing repays, ages, or clears an entry 
 - As a member, I can see total spend, each member's paid amount, each member's allocated share, and a single settlement statement for that period.
 - As a member, I can manually refresh and see whether changes are pending or the app is offline.
 - As a member, I benefit from sync attempts on launch, foreground resume, after a mutation, manual refresh, network recovery while the app is alive, and best-effort Android background work.
+- As a member, I am notified on my phone when a sync brings in something the other member added, edited, or deleted, even if the app is closed at the time.
 
 Android may defer or suppress background work because of battery, network, vendor, and OS policies. The product must not promise instant background synchronization; foreground and manual sync remain authoritative user paths.
 
@@ -160,7 +162,7 @@ Android may defer or suppress background work because of battery, network, vendo
 - Optional filters narrow the list by spending period, payer, fixed category, and an inclusive displayed date range. All of them start unset, and the range can be cleared back to all dates.
 - Distinguish an empty ledger from a search that matched nothing.
 - A subtle row state distinguishes acknowledged, waiting-to-sync, and needs-attention changes without preventing edit/delete.
-- Settings shows the signed-in member, API environment/host label, app version, manual sync, logout, and a short local-data explanation.
+- Settings shows the signed-in member, API environment/host label, app version, manual sync, logout, a notifications card, and a short local-data explanation.
 - Logout attempts refresh-token revocation, always clears Android secure tokens locally, and does not delete Drift expenses, periods, loans, or queued mutations if the API is unavailable.
 
 ### 5.7 Lending ledger
@@ -181,6 +183,16 @@ Android may defer or suppress background work because of battery, network, vendo
 - A transient sync failure leaves local changes pending and does not block local work.
 - A server validation rejection marks the affected item as needing attention and shows an actionable error naming the returned code; it must not be retried indefinitely.
 - Connectivity status can trigger an attempt, but the UI calls the service reachable only after an HTTP success.
+
+### 5.9 Household activity notifications
+
+- The notification permission is requested once, on the first open after install, before sign-in matters. A denial or an unavailable notification service must not affect startup, offline use, or any other screen.
+- A sync that applies a change the other member made posts one Android notification per change, naming the author and the operation in the title and the details in the body: amount, category, note, and the payer when the payer is not the author for an expense; the "who owes whom" summary and the note for a loan; the period name for an open or a close.
+- More than one change in a single sync groups the individual notifications under one summary.
+- Notifications post whether the app is closed, backgrounded, or in the foreground.
+- A member is never notified about their own change, including when it arrives back through the change feed after being acknowledged, and a first-install bootstrap notifies about nothing at all.
+- Settings offers a switch for household activity announcements and — when Android is blocking notifications — says so, explains how to re-enable them in Android Settings, and offers a re-check. Android does not re-show its permission dialog, so the app never claims it can ask again.
+- Turning the switch off silences announcements only; sync keeps running exactly as before.
 
 ## 6. Entity fields and validation
 
@@ -399,3 +411,5 @@ For the same `10100` poisha expense paid by Ebrahim, Ebrahim is allocated `5100`
 - On an optimistic-version conflict, server data wins locally and the user sees a brief conflict message naming the ledger it came from.
 - A validation rejection marks that one queued change as needing attention, leaves the rest of the batch alone, and is not retried.
 - The app never treats a connectivity signal alone as proof that the API is reachable.
+- Each change in the feed names its author, and only the other member's changes are announced: an own write echoing back after acknowledgement, a bootstrap, and a change from an API too old to name an author all stay silent.
+- Notifications for a page are posted only after that page's transaction has committed, so a rolled-back page announces nothing.
