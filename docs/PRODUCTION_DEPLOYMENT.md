@@ -155,6 +155,47 @@ down migration, and the original sub-taka values are not recoverable from the
 database afterwards. Take an on-demand backup immediately before deploying it,
 and note that redeploying an older API cannot restore the old amounts.
 
+The `20260817090000_change_author` migration adds `ExpenseChange.actorMemberKey`
+and backfills it by joining each change to the `ProcessedMutation` that produced
+it, then makes the column `NOT NULL`. The join is total, because no code path
+deletes a processed mutation, so the migration fails loudly rather than inventing
+an author if that ever stops being true.
+
+It is additive for readers only. The column has no default, so an older API —
+which never sets it — cannot insert a change row once the final statement has
+run, and every mutation it accepts would fail on the write. Apply the migration
+as part of the release that carries the new API code, not ahead of it, and treat
+the gap between the two as a short window in which writes fail. Rolling back
+means restoring the pre-migration backup and then redeploying the old release;
+redeploying the old release on its own leaves the API unable to record a change.
+
+Because that final statement is what would abort a deploy, rehearse it once on a
+restored copy of production before the real run:
+
+```powershell
+pg_restore --clean --if-exists --no-owner --no-acl `
+  --dbname '<REHEARSAL_DATABASE_URL>' expenses.backup
+$env:DATABASE_URL = '<REHEARSAL_DATABASE_URL>'
+npm.cmd run prisma:migrate:deploy --workspace @expenses/api
+```
+
+A clean run there means the real deploy has nothing left to discover. Remove the
+rehearsal URL from the environment afterwards, and never commit it.
+
+**Deploy the API before installing the new APK.** The APK reads the change
+author to decide whether an incoming change belongs to the other member, and it
+treats a missing author as "do not notify" — so an APK running against an API
+without this migration syncs exactly as before and stays quiet, whereas the
+reverse ordering would be the only combination that could lose notifications
+silently.
+
+The `20260818120000_device_tokens` migration is the untroubling one. It adds a new
+`DeviceToken` table and the `DevicePlatform` enum and alters nothing existing, so an
+older API ignores both: it is safe to apply ahead of the deploy, and safe to leave
+behind after a rollback. No backup rehearsal is warranted for it. The table stays
+empty until a phone running the new APK registers, and an empty table simply means
+no push is sent — which is the same behaviour as no credential configured.
+
 ## Android identity, icon, and production URL
 
 - App name: **Household Expenses**.
