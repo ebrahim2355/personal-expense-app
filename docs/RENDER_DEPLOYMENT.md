@@ -72,6 +72,34 @@ carelessly:
 `server.listen(port)` with no host, so every interface is bound and Render can
 reach it.
 
+`FIREBASE_SERVICE_ACCOUNT_BASE64` is the one exception to the reviewable-in-Git
+rule. It is declared with `sync: false`, so the Blueprint reserves the key and the
+value is pasted in the **Environment** tab. It holds the base64 of the Firebase
+service-account JSON — base64 because the private key inside contains newlines and
+a dashboard field mangles them.
+
+It is optional, and that is deliberate. Unset, the API starts normally, logs
+
+```text
+push disabled: FIREBASE_SERVICE_ACCOUNT_BASE64 is not configured, clients rely on background polling
+```
+
+once, and every mutation still succeeds; clients fall back to their fifteen-minute
+poll. Set, the same startup logs `push enabled` and each landed change wakes the
+other member's phone in seconds. So it can be added, rotated, or removed without a
+code or database change, and losing it degrades timing rather than function.
+
+A malformed value does stop the service, on purpose: startup decodes and validates
+the JSON, so a truncated paste fails as one clear log line instead of as
+notifications that silently never arrive. The two messages are
+
+```text
+FIREBASE_SERVICE_ACCOUNT_BASE64 must be base64-encoded service account JSON.
+FIREBASE_SERVICE_ACCOUNT_BASE64 must contain project_id, client_email, and private_key.
+```
+
+The private key is redacted from every other log line.
+
 ## Verify the deployment
 
 Render assigns an `onrender.com` HTTPS URL, or use a custom domain. Verify all
