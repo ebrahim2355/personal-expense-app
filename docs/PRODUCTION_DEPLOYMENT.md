@@ -285,6 +285,21 @@ Install on each phone with USB debugging or by opening the APK:
 adb install build/app/outputs/flutter-apk/app-release.apk
 ```
 
+Deploy the API, including its migrations, before installing a new APK. Open the
+app once after a fresh installation and allow the notification permission when
+Android asks; the request is made once and never repeated, so a denial can only be
+undone in Android Settings. No second prompt follows it. The battery-optimization
+exemption is offered by the Settings notifications card instead, and only while
+Android is actually throttling background work — worth granting on each phone,
+because on HyperOS/MIUI the button opens a **Battery details** screen where the
+option that matters is **No restrictions** rather than the recommended-looking
+default. It governs the fifteen-minute backstop poll rather than push, which is
+why it is no longer in the way of a first launch.
+
+A phone registers for push only after signing in, so a fresh install is not
+addressable until its first successful login. Nothing needs doing about that: the
+registration happens on its own, and until it does the phone runs on polling.
+
 For every update, keep the same application ID and signing key, increment the
 build number, and install over the existing app:
 
@@ -317,5 +332,22 @@ which would erase local data.
    one open period and keep the settled period's expenses in History.
 7. Record a loan on phone A, sync both, and verify phone B shows the same lending
    net total while the expense settlement figure is unchanged.
-8. Install the next higher-build-number APK with `adb install -r`; verify the
-   existing expense history remains before and after synchronization.
+8. Add an expense on phone A and sync phone B: phone B shows one notification
+   naming Sumon or Ebrahim with the right amount, category, payer, and note, and
+   phone A shows nothing for its own entry.
+9. Background phone B without opening it again, add an expense on phone A, and
+   sync A. Phone B should notify within seconds rather than at its next poll, and
+   Settings on B should then show a **Push wake** timestamp instead of "Never
+   received on this device". That timestamp is the check — a notification alone
+   could have come from a well-timed background poll.
+10. Repeat step 9 after swiping phone B fully out of Recents. On HyperOS/MIUI this
+    force-stops the app, and whether a data-only message still reaches a
+    force-stopped package is measured here rather than assumed. If nothing arrives,
+    the app is not broken: it falls back to the poll on next launch, and the
+    documented content-free fallback in
+    [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) is the change to make.
+11. Sign out on phone B, add an expense on phone A, and confirm phone B is not
+    woken. Signing out deregisters the device while its access token is still
+    valid, so a signed-out phone stops being addressable.
+12. Install the next higher-build-number APK with `adb install -r`; verify the
+    existing expense history remains before and after synchronization.
