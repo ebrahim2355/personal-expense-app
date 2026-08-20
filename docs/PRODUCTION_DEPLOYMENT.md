@@ -46,6 +46,26 @@ LOG_LEVEL=info
 origins while allowing the native Android client, which sends no `Origin`.
 Only add exact HTTPS browser origins if a browser client is explicitly added.
 
+One further variable is optional and deliberately omitted above, because the API
+runs correctly without it:
+
+```text
+FIREBASE_SERVICE_ACCOUNT_BASE64=<base64 of the Firebase service-account JSON>
+```
+
+It is what lets the API wake the other member's phone the moment a change lands.
+Base64 rather than the raw JSON because the private key inside contains newlines,
+which a dashboard field mangles. Unset, startup logs `push disabled: …` once, every
+mutation still succeeds, and clients fall back to their fifteen-minute poll; set,
+startup logs `push enabled`. So it can be added, rotated, or removed without a code
+or database change.
+
+A malformed value fails the boot on purpose — startup decodes and validates the
+JSON, so a truncated paste is one clear log line rather than notifications that
+silently never arrive. Treat it as a credential: it is a service-account private
+key, it must never be committed, and the API redacts `privateKey` from every log
+line.
+
 Railway reads these committed settings from `railway.toml`:
 
 ```text
