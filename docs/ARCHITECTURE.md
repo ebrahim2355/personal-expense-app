@@ -632,22 +632,44 @@ BDT parsing/formatting, whole-taka rejection at both bounds, odd-taka allocation
 settlement, the lending net total, and IANA `Asia/Dhaka` month/day boundaries.
 Widget tests cover login errors, exact dashboard totals for the open period, the
 close-period flow, the lending screen, history search, empty/small-screen states,
-local add/edit/delete, duplicate submission, offline status, and server-wins
-conflict feedback.
+local add/edit/delete, duplicate submission, offline status, server-wins
+conflict feedback, and the Settings notifications card. Notification coverage
+also includes pure title/body wording for every entity and operation, and sync
+tests asserting silence for an own write echoing back, for bootstrap, for a
+skipped snapshot, for an unattributed change, for a rolled-back page, and for the
+Settings switch turned off. Background-delivery coverage asserts that the
+exemption is asked for at most once, that a dialog which never launched is retried
+rather than recorded, that an unavailable channel neither throws nor records, that
+the exemption stays out of `willNotify`, and that Settings renders the throttling
+advisory and the last-background-run line — including the never-run case.
+Push coverage asserts that an unchanged token is not re-registered, that a failed
+POST leaves the install unregistered so the next launch retries, that a rotated
+token replaces the old registration, that signing out deregisters before the
+token is discarded, that a null token from broken Play Services registers nothing,
+that an arriving foreground message syncs and stamps the wake instant, and that
+Settings reports "never received" until one has.
 The backend suite covers login/failure/unauthorized requests, refresh rotation
 and logout, validation/money boundaries including whole-taka rejection, period
 create/close rules (`PERIOD_ALREADY_OPEN`, `PERIOD_NOT_FOUND`, a rejected period
 delete, and no reopen), loan create/update/delete, expense-to-period assignment,
 Dhaka-to-UTC boundaries, duplicate and concurrent offline creates, update/delete
 propagation, stale-version conflict, cursor/bootstrap pagination for all three
-entity types, tombstones, and household isolation. Integration tests require
+entity types, tombstones, and household isolation. Push coverage there asserts the
+message shape that the whole design rests on — no `notification` block, `high`
+priority, one collapse key — that a token Google reports as gone is retired rather
+than deleted, that a device moves to whichever member signed in last, that an
+unauthenticated or malformed registration is refused, that a mutation still
+applies when the send fails outright, and that a replayed batch wakes nobody.
+Integration tests require
 `TEST_DATABASE_URL` for an actual disposable PostgreSQL database; SQLite is never
 substituted.
 
 The real-stack suite adds two independent file-backed Drift databases over the
 production Dio/auth/sync path, the compiled Express API, and PostgreSQL 18. Its
-thirteen scenarios include period-close convergence across devices, loan CRUD
-across devices, and a server-side whole-taka rejection. It injects failures at
+fourteen scenarios include period-close convergence across devices, loan CRUD
+across devices, a server-side whole-taka rejection, and notification attribution
+in both directions — each device told about the other member's create, edit, and
+delete, and silent about its own. It injects failures at
 transport boundaries to prove lost-response idempotency and interrupted
 cursor-page recovery without timing sleeps. Test cleanup is accepted only for an
 explicitly matched `_test`/`-test` database URL. Request IDs connect mobile and
