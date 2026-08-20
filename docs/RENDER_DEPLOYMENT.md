@@ -124,6 +124,21 @@ A failed pre-deploy migration fails the whole deploy. The previous release keeps
 serving with no downtime, and the deploy is marked failed in **Events**. Read the
 pre-deploy logs, not the build logs, for the Prisma error.
 
+Push is verified from the same log stream. Startup logs `push enabled` or `push
+disabled: …` exactly once, so that line answers whether the credential was read at
+all. Once both phones have signed in on the new APK, each landed change logs
+
+```text
+household activity push sent
+```
+
+with `deviceCount`, `delivered`, and `retired` — never the token itself. A
+`deviceCount` of `0` means the other member's phone has not registered yet;
+`delivered` short of `deviceCount` with a non-zero `retired` means Google reported a
+token as gone and the row was disabled, which the next launch of that phone
+re-registers. `household activity push failed` is a warning rather than an error on
+purpose: the mutations are already committed and the poll still covers it.
+
 ## Provision or rotate the two PINs
 
 Provisioning is an explicit one-off command, never part of a deployment, because
