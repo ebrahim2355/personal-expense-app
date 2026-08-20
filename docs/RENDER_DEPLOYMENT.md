@@ -255,7 +255,28 @@ down migration, the original sub-taka values are not recoverable from the
 database afterwards, and redeploying an older API cannot restore the old
 amounts. Take a backup immediately before deploying it.
 
+The `20260817090000_change_author` migration adds `ExpenseChange.actorMemberKey`,
+backfills it from the `ProcessedMutation` behind each change, and then makes the
+column `NOT NULL`. It is additive for readers, but the column has no default, so
+an older API — which never sets it — cannot insert a change row afterwards and
+would fail every mutation on the write. Redeploying the previous release is
+therefore not a rollback on its own; restore the pre-migration backup first. On a
+free instance type without a pre-deploy command, apply the migration from your
+machine immediately before the deploy that carries the new code, so the window in
+which writes fail stays short.
+
 ## Point the Android app at Render
+
+Deploy the API, including the migration above, before installing the new APK. The
+app treats a change with no recorded author as one not to announce, so the new APK
+against an older API syncs normally and only misses notifications; the reverse
+ordering is the one that fails silently.
+
+The `20260818120000_device_tokens` migration is the easy one: it adds a new
+`DeviceToken` table and the `DevicePlatform` enum and touches nothing existing. An
+older API ignores both, so it is safe to apply ahead of the deploy and safe to
+leave in place after a rollback. The table stays empty until a phone running the
+new APK registers, and an empty table simply means no push is sent.
 
 The API origin is supplied at build time and is not a secret:
 
