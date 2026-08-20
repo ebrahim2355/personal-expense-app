@@ -56,6 +56,11 @@ bodies are reconstructed from Zod-validated fields; there is no mass assignment.
   announce writes on.
 - `lib/src/application`: session state, serialized sync, conflict notices, and
   launch/resume/mutation/manual/connectivity triggers.
+- `lib/src/notifications`: the activity notifier interface the coordinator
+  depends on, pure title/body wording, the `flutter_local_notifications`
+  presenter, the permission wrapper, and the `firebase_messaging` wrapper that
+  supplies the token and the arrival stream. Only the presenters and the wrappers
+  touch a plugin, so wording and the sync path stay testable without Android.
 - `lib/src/presentation`: Material 3 login, dashboard, add/edit, lending,
   history, settings, reusable expense/loan/sync widgets, and Riverpod view
   state. Widgets use repository/domain abstractions and primitive status
@@ -84,9 +89,25 @@ The local schema has five tables:
    status. `entity_type` defaults to `EXPENSE`, so a row queued before periods
    and loans existed still names the right entity after an upgrade.
 5. `sync_metadata` is a singleton holding household/member identity, the last
-   committed opaque cursor, resumable bootstrap token/watermark, and the last
-   successful full-sync instant used by the UI. It does
-   not hold access or refresh tokens.
+   committed opaque cursor, resumable bootstrap token/watermark, the last
+   successful full-sync instant used by the UI, the instant the notification
+   permission was requested, whether household-activity announcements are
+   enabled, the instant the battery-optimization exemption was asked for, the
+   instant the background isolate last completed a run, a fingerprint of the FCM
+   token last registered with the API, when that registration succeeded, and when
+   a push last woke this device. It does not hold access or refresh tokens, and it
+   never holds the FCM token itself — only a SHA-256 digest of it, which is enough
+   to tell an unchanged token from a rotated one without storing an address.
+
+   The last five all start null, and null is the honest answer in each case: the
+   exemption has not been asked for on this install, no background run has been
+   observed, nothing has been registered, and no push has ever arrived.
+   `last_background_sync_at` is distinct from the full-sync instant
+   because any foreground sync moves that one; only this column can answer
+   whether Android is letting closed-app delivery happen at all, so the
+   background dispatcher writes it for every outcome, an offline one included.
+   `last_push_received_at` is the one value that separates a working push from a
+   well-timed poll, which is why it is stored and shown rather than inferred.
 
 Create/edit/delete writes the projection and outbox in one SQLite transaction,
 then emits a trigger after commit. Closing a spending period is one transaction
@@ -202,6 +223,10 @@ outbox rows.
   snapshot shape the JSONB document holds.
 - Household/entity/version, operation (`CREATED`, `UPDATED`, `DELETED`), unique
   origin mutation UUID, complete canonical JSONB snapshot, and server time.
+- `actorMemberKey` names the member whose authenticated identity produced the
+  change, written in the same transaction as the change itself. It is the only
+  authoritative answer to "who did this", and the client's notification decision
+  rests entirely on it — see [section 7](#7-pull-cursors-tombstones-and-first-device-bootstrap).
 - Household queries use `sequence > decodedCursor`, ascending order, and
   `limit + 1` to calculate `hasMore`.
 - A deleted snapshot is a full expense or loan tombstone with non-null
@@ -351,6 +376,29 @@ bounded exponential backoff/jitter, honors `Retry-After`, and avoids blind
 retries for auth/validation failures. Android WorkManager remains best-effort;
 Android cannot
 guarantee immediate or exact background execution.
+
+Notifying the other member's activity rides on this same pull, with no second
+network path:
+
+1. A change is notifiable only when it actually altered local state, only when
+   the feed attributed it to a member, and only when that member differs from the
+   one recorded in `sync_metadata`. Everything else resolves to silence,
+   including a device with no recorded member — it has no way to recognize its
+   own writes, so it announces nothing rather than announcing wrongly.
+2. The comparison has to use the server's `actorMemberKey`. Acknowledging a
+   pushed mutation deletes its outbox row, and the same run then pulls the change
+   the server wrote for it — so by the time the change arrives, the absence of an
+   outbox row says nothing about who wrote it.
+3. Notifiable items accumulate inside the transaction that applies the page and
+   persists the cursor, and are posted only after that transaction commits.
+   Posting inside it would announce a page that may still roll back; a crash in
+   the gap loses a notification instead, which is the safer failure.
+4. Bootstrap applies snapshots directly and never runs this path, so a fresh
+   installation is silent no matter how much history it consumes.
+5. The coordinator depends on a notifier interface, not on the notification
+   plugin, and awaits it. The background isolate exits the moment a run returns,
+   so a stream listener could never be relied on to fire; it also builds its own
+   notifier, because plugin registrations do not cross isolates.
 
 ## 8. Money and time ownership
 
