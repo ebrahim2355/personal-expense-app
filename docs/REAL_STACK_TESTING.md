@@ -86,6 +86,15 @@ The real-stack test deterministically proves:
     that installs later receives everything through bootstrap and announces
     nothing.
 
+Push is deliberately absent from this list. Every device-facing part of it is
+covered by the API and Flutter suites — the exact message shape, token retirement,
+the member handoff, a mutation applying when the send fails, a replayed batch
+waking nobody, and the registration/rotation/sign-out paths — and the one thing
+left is whether Google actually delivers to a given phone, which no test can
+assert. That is the manual **Push wake checks** below. The real-stack suite runs
+with no Firebase credential, so it exercises exactly the disabled-notifier path
+that a production API without the variable would take.
+
 ## Interactive local API
 
 For manual Android testing, start the disposable PostgreSQL service:
@@ -99,6 +108,14 @@ Fill `apps/api/.env` with local-only values. Use port `3000`, database URL
 `postgresql://expenses_test:expenses_test@127.0.0.1:55432/expenses_e2e_test?schema=public`,
 independent random signing secrets of at least 32 characters, `TRUST_PROXY_HOPS=0`,
 and explicit 6–12 digit initial PINs. The file is ignored; never commit it.
+
+Leave `FIREBASE_SERVICE_ACCOUNT_BASE64` unset unless you are specifically running
+the push checks below. Unset is the normal local shape: the API logs `push
+disabled: …` once and clients poll, which is what most of the manual checklist
+exercises. Set it only against a Firebase project you are willing to send test
+messages through, and remember that a real phone registered here will keep being
+woken by whichever API last saw its token.
+
 Then run:
 
 ```powershell
@@ -220,6 +237,53 @@ adb -s <ANDROID_DEVICE_ID> shell cmd jobscheduler run -f `
    reports that Android is blocking them and explains where to re-enable them.
    Re-enable them there, tap **Re-check**, and confirm the card clears without
    restarting the app.
+
+### Push wake checks
+
+These need the API to have `FIREBASE_SERVICE_ACCOUNT_BASE64` set and the APK to
+have been built with a `google-services.json` from the same Firebase project. The
+local Compose stack has neither by default, so run these against the deployed API
+or export the variable before starting the API by hand. Without it the API logs
+`push disabled: …` at startup and these steps prove nothing — check that line
+first, because a silent phone and a disabled sender look identical from the
+outside.
+
+The API log is the other half of every step below. A landed change logs
+`household activity push sent` with `deviceCount`, `delivered`, and `retired`, so
+`deviceCount: 0` tells you B never registered and separates a registration problem
+from a delivery one.
+
+1. Sign in on B, then check Settings → **Push wake**. It reads "Never received on
+   this device" until the first push lands; registration happens at sign-in, so a
+   `deviceCount` of 0 on the next change means the POST failed rather than that
+   push is broken.
+2. Background B without closing it, add an expense on A, and sync A. B notifies
+   within seconds, and **Push wake** on B now shows a timestamp to the minute in
+   Dhaka time. **That timestamp is the actual assertion** — a notification on its
+   own could have come from a background poll that happened to fire.
+3. Repeat step 2 with B's screen off and the phone left idle for a few minutes
+   first. This is the case polling cannot cover: Play Services' socket is
+   Doze-exempt, so a `high` priority message still arrives.
+4. Swipe B fully out of Recents and repeat step 2. On HyperOS/MIUI that
+   force-stops the package, and whether a data-only message still reaches a
+   force-stopped app is **measured here rather than assumed**. If nothing arrives,
+   note it and stop: the fallback is a single documented flag, described in
+   `docs/IMPLEMENTATION_PLAN.md`, and it is not to be taken on a hunch.
+5. Turn **Household activity** off on B and repeat step 2. B stays silent but
+   **Push wake** still advances, which is the proof that the push arrived and the
+   client suppressed the notification — the switch lives only in B's local
+   database, so a server-composed notification would have ignored it.
+6. Sign out on B, add an expense on A, and sync A. The API log shows
+   `deviceCount: 0`: sign-out deregisters while the access token is still valid, so
+   a signed-out phone stops being addressable rather than being woken and dropping
+   the message.
+7. Put B into airplane mode, add an expense on A, sync A, then bring B back
+   online. The push is lost — Google holds it for the thirty-minute TTL but this is
+   worth seeing fail — and the notification arrives on B's next poll or next open.
+   That is the reason polling stays.
+8. Add three expenses on A in quick succession, syncing after each. B is woken
+   once, not three times: one collapse key means a burst costs one wake, and the
+   sync that follows finds all three changes and posts them with a summary.
 
 When finished, stop and remove only the disposable Compose project:
 
