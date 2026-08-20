@@ -291,6 +291,14 @@ Release builds reject a missing or non-HTTPS origin, and the production manifest
 sets `android:usesCleartextTraffic="false"`. Never pass PINs, tokens, database
 credentials, or signing passwords as Dart defines.
 
+That build also needs `android/app/google-services.json`, which is gitignored and
+provisioned locally — see
+[`apps/mobile/README.md`](../apps/mobile/README.md#local-setup-google-servicesjson)
+for where to get it and the Gradle error a missing one produces. It must belong to
+the same Firebase project as the service account pasted into Render; a mismatch
+registers tokens the API cannot address, and the only visible symptom is that
+Settings keeps reporting no push has ever arrived.
+
 Changing the API host means rebuilding and reinstalling the app. Both phones must
 point at the same host, or they will sync against different databases and appear
 to lose each other's expenses.
