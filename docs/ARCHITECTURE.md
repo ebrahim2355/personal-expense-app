@@ -11,7 +11,20 @@ Express 5 / TypeScript API on Railway
         | Prisma 7 + PostgreSQL driver adapter
         v
 Railway PostgreSQL
+
+Express 5 / TypeScript API
+        | data-only "come and sync" message, no content
+        v
+Firebase Cloud Messaging
+        | Play Services socket, Doze-exempt
+        v
+Flutter Android — syncs over the HTTPS path above
 ```
+
+The push arrow carries no expense data and is not a second source of truth. It
+tells the phone to run the same pull it would have run on its next poll; every
+value still arrives over the HTTPS path, and the phone composes its own
+notifications from its own database.
 
 The API is the authentication and canonical synchronization boundary. Flutter
 renders from Drift and will compute dashboard totals locally, so expense data
@@ -27,9 +40,10 @@ behaviorally identical to that contract.
 - `src/config`: environment validation and production proxy/origin rules.
 - `src/domain`: fixed enums, integer money bounds/split rules, transport-neutral
   models, validation, and stable application errors.
-- `src/application`: authentication/session and synchronization use cases.
-- `src/infrastructure`: Prisma/PostgreSQL, token/cursor cryptography, and safe
-  structured logging.
+- `src/application`: authentication/session and synchronization use cases, the
+  device registry a push is addressed through, and the notifier that fires one.
+- `src/infrastructure`: Prisma/PostgreSQL, token/cursor cryptography, the
+  Firebase Cloud Messaging sender, and safe structured logging.
 - `src/http`: Express middleware, health/auth/sync routes, request IDs, rate
   limits, and centralized errors.
 - `prisma`: PostgreSQL schema and committed migrations.
@@ -54,8 +68,9 @@ bodies are reconstructed from Zod-validated fields; there is no mass assignment.
 - `lib/src/data/repositories`: UI-facing expense/period/loan/authentication
   operations, plus the shared local-mutation event type all three ledgers
   announce writes on.
-- `lib/src/application`: session state, serialized sync, conflict notices, and
-  launch/resume/mutation/manual/connectivity triggers.
+- `lib/src/application`: session state, serialized sync, conflict notices,
+  notification preferences, push-token registration, and
+  launch/resume/mutation/manual/connectivity/push triggers.
 - `lib/src/notifications`: the activity notifier interface the coordinator
   depends on, pure title/body wording, the `flutter_local_notifications`
   presenter, the permission wrapper, and the `firebase_messaging` wrapper that
@@ -244,6 +259,28 @@ outbox rows.
 Sequence values may contain gaps after rolled-back PostgreSQL transactions; the
 ordering is monotonic, not required to be contiguous.
 
+### `DeviceToken`
+
+- One row per installed app that may be woken by a push, scoped to a household
+  and a member.
+- Rows are addresses, not credentials, and that is the one place this model has
+  to depart from `RefreshToken`. Holding an FCM registration token lets the
+  holder send a message *to* the device, never act *as* the member, and the
+  server must present the value verbatim to Google — so unlike a refresh token it
+  cannot be stored as a hash alone.
+- `tokenHash` is still the unique key, so the fixed-width index habit survives
+  and re-registering an unchanged token is an upsert that changes only
+  `lastSeenAt`.
+- The member relation is composite on `(householdId, memberId)`, which makes "a
+  device never names a member from another household" a database guarantee. The
+  send query trusts `householdId` alone to decide who gets woken, so that
+  guarantee is load-bearing rather than decorative.
+- A token Google reports as gone is marked `disabledAt` rather than deleted, so a
+  phone that stopped receiving pushes is still visible while diagnosing.
+  Re-registering the same token clears the flag.
+- The token value never appears in a log line or an error message. The logger
+  redacts `token` and `privateKey` at every depth.
+
 ## 4. Authentication and authorization
 
 1. Login accepts only a fixed member key and a 6–12 digit PIN over HTTPS.
@@ -285,6 +322,19 @@ Synchronization:
 - `POST /v1/sync/mutations`: 1–50 ordered mutation candidates.
 - `GET /v1/sync/changes`: signed cursor and page size 1–250 (default 100).
 - `GET /v1/sync/bootstrap`: signed page token and the same page bounds.
+
+Push registration:
+
+- `POST /v1/devices`: an FCM registration token and its platform, both
+  authenticated. Answers `204`; re-posting an unchanged token is a no-op that only
+  moves `lastSeenAt`, and a token already held by the other member moves to
+  whoever signed in last.
+- `POST /v1/devices/unregister`: the same token, removed so a signed-out phone
+  stops being woken. Also `204`, and idempotent.
+
+Both are rate-limited on their own bucket and log the member and platform but
+never the token. Neither returns anything about a device: the client already knows
+what it sent, and a listing would be a way to read addresses back out.
 
 There are no parallel online CRUD shapes. Client writes to all three
 synchronized entities always use the mutation route; server-to-client state
@@ -438,6 +488,78 @@ cancels its jobs until the app is next opened; only the OEM Autostart toggle
 mitigates that and no app can read or set it. And polling alone is fifteen
 minutes at best, which is what the push path below exists to shorten.
 
+### 7.1 Push wake
+
+The API sends a Firebase Cloud Messaging message the moment a change lands, which
+is the only delivery route that reaches an idle phone in seconds: Play Services
+holds one socket Doze does not touch, so a `high` priority message is not queued
+behind the next maintenance window.
+
+The message carries no content. The entire payload is
+`data: { "type": "household-activity" }`, `high` priority, a thirty-minute TTL,
+and one collapse key so a burst of edits wakes the phone once. It is a nudge; the
+app syncs and composes every notification from its own database afterwards.
+
+That is a decision with two reasons behind it, both structural:
+
+1. A server-composed `notification` block is drawn by the system tray **before any
+   Dart runs**, which bypasses both rules that decide what gets said — the
+   author-suppression check against the feed's `actorMemberKey`, and the
+   household-activity switch, which lives only in that device's Drift
+   `sync_metadata` where the server cannot read it. Composing on the client is
+   what keeps those rules the single implementation rather than a pair to be kept
+   in step.
+2. Amounts, notes, and member names never traverse Google, and the local database
+   stays the only thing a notification is ever composed from — so a notification
+   can never describe a change the device does not have.
+
+The trigger sits at the end of `SyncService`, and three properties of where it
+sits matter:
+
+- **After every transaction has committed.** Firing inside one would wake the
+  other phone for a page that may still roll back.
+- **Fire-and-forget with a `.catch()` attached.** The mutations are already
+  durable and the response owes the client nothing more, so the round trip to
+  Google must not be added to the time the phone spends waiting to sync. The
+  `.catch()` is the backstop that keeps a bug in the notifier from becoming an
+  unhandled rejection.
+- **Only when a change actually landed.** A replayed mutation returns the stored
+  receipt's `APPLIED` result verbatim, so the status alone cannot tell a change
+  that just landed from one being re-uploaded after a lost response. The batch
+  tracks which mutation ids were answered from a receipt and excludes them; a
+  replay grew no change feed, so the other phone has nothing to come and fetch.
+
+The author's own devices are excluded from the send. That is defence in depth
+rather than the rule — the client suppresses its own changes regardless — but
+waking the phone that just made the change spends its radio to tell it something
+it already knows.
+
+A failed send is logged and swallowed. Every write has committed and the
+fifteen-minute poll is still in place, so the worst a failure costs is the delay
+push was meant to remove. With no `FIREBASE_SERVICE_ACCOUNT_BASE64` configured the
+notifier is the disabled implementation, which skips the device query as well as
+the send: an API without Firebase does no extra work per mutation and behaves
+exactly as it did before push existed. FCM is an accelerator, which is why the
+poll stays.
+
+On the device, `runBackgroundSync()` is shared by the FCM background handler and
+the WorkManager dispatcher, so a pushed wake records `lastBackgroundSyncAt` and
+composes notifications exactly as a poll does. The background handler calls
+`Firebase.initializeApp()` first — its isolate has no Firebase instance of its own
+— and, like the WorkManager isolate, must never touch the platform channel.
+
+Registration is per install. The controller posts the token after sign-in and on
+every `onTokenRefresh`, stores a SHA-256 fingerprint of what it sent so an
+unchanged token is not re-POSTed on every launch, and leaves the registration
+instant null when the POST fails so the next launch retries. Signing out
+deregisters first, while the access token is still valid, because a signed-out
+phone must stop being woken. A phone with broken or absent Play Services gets a
+null token, registers nothing, and runs on polling alone.
+
+`firebase_messaging` never asks for a permission. `POST_NOTIFICATIONS` has a
+single owner, described above, and a second asker would silently undo its
+tri-state logic.
+
 ## 8. Money and time ownership
 
 The API validates and stores canonical expense values but does not calculate a
@@ -489,6 +611,13 @@ a ten-second forced shutdown bound.
 Provisioning is an explicit post-migration operational action. Initial PIN
 variables must be removed from the runtime environment after successful hashing.
 Migrations and provisioning never print credentials.
+
+`FIREBASE_SERVICE_ACCOUNT_BASE64` is the one optional secret: a base64-encoded
+service-account JSON, validated at startup so a malformed value fails the boot
+rather than the first push. Absent, the API logs "push disabled" once, sends
+nothing, and clients rely on the fifteen-minute poll — so the variable can be added
+or removed without a code change, and losing it degrades timing rather than
+function. The private key is redacted from every log line.
 
 ## 10. Required verification
 
