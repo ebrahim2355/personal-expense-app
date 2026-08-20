@@ -218,7 +218,8 @@ npm.cmd run stack:test:down
 ```
 
 Exit criterion met locally: ten mobile real-stack scenarios and all 28 API tests
-pass against PostgreSQL. Milestone 9 raised the suite to thirteen scenarios. A
+pass against PostgreSQL. Milestone 9 raised the suite to thirteen scenarios and
+milestone 10 to fourteen. A
 two-installation hardware smoke pass remains part of release validation, using
 the deterministic checklist in
 `docs/REAL_STACK_TESTING.md`. Android background timing remains explicitly
@@ -262,6 +263,51 @@ suite, and thirteen real-stack scenarios pass, including period-close
 convergence across devices, loan CRUD across devices, and a server-side
 whole-taka rejection. The manual two-installation checklist in
 `docs/REAL_STACK_TESTING.md` remains part of release validation.
+
+### Milestone 10 — Android notifications for the other member's activity (complete)
+
+An explicit product revision: notifications moved from out of scope to in scope,
+for local notifications posted by background sync only. Push was still out of
+scope at this point, so notifications inherited background sync's timing —
+milestone 11 is the revision that fixed that.
+
+Delivered:
+
+- `ExpenseChange.actorMemberKey` plus its migration, which backfills authorship
+  by joining each change to the `ProcessedMutation` that produced it, and an
+  `actorMember` field on `EntityChange` in the contract. Authorship has to come
+  from the server: pushing a mutation deletes its outbox row before the same
+  change arrives in the feed, so locally an own write is indistinguishable from
+  the other member's;
+- `ChangeDto.operation` and `ChangeDto.actorMember` parsed on the client, the
+  second one nullable so an APK running against an older API syncs normally and
+  simply stays quiet;
+- notifiable activity collected inside the page transaction and announced only
+  after it commits, filtered to changes that altered local state and that the
+  server attributed to the other member. Bootstrap never announces;
+- one high-importance `household-activity` channel, per-change wording with the
+  amount, category, payer, and note, an `InboxStyle` summary when a sync brings
+  more than one change, and notification ids derived from entity and version so
+  a retried page cannot double-post;
+- `POST_NOTIFICATIONS` requested once on the first open after install, recorded
+  in `SyncMetadata`, and a Settings notifications card showing Android's own
+  answer, a household-activity switch, and re-enable instructions after a denial;
+- background sync raised from every six hours to WorkManager's fifteen-minute
+  floor, with its own notifier built inside the background isolate.
+
+Checks:
+
+```powershell
+npm.cmd run check
+npm.cmd run mobile:check
+npm.cmd run test:real-stack
+```
+
+Exit criterion met: fourteen real-stack scenarios pass, the new one proving that
+the author's device stays silent about its own write echoing back while the other
+device is told about it. The two-device notification checklist in
+`docs/REAL_STACK_TESTING.md` remains part of release validation, because
+WorkManager timing cannot be asserted in a test.
 
 ### Milestone 8 — Railway staging, CI, and release hardening
 
@@ -308,6 +354,7 @@ it would re-hash/reset PINs on every release.
 | Whole-taka backfill rewrites history | Silently altered past amounts | One committed migration that rounds to the nearest taka with a one-taka floor; back up before deploying it, and treat it as irreversible. |
 | Two devices opening a period at once | Two open periods, split dashboard | Partial unique index on the open period, `PERIOD_ALREADY_OPEN` rejection, close queued before the next create; real-stack close-convergence scenario. |
 | Loans mistaken for expense settlement | Wrong amount actually paid | Separate tables, separate net total, no shared query; tests assert the settlement figure does not move when a loan is recorded. |
+| Own write announced as the other member's | Every entry self-notifies | Server-assigned `actorMember` on every change row, compared against the member recorded on the device; acknowledging a push deletes the outbox row, so nothing local can make that call. Real-stack scenario 14 asserts the author's device stays silent. |
 
 ## 5. Scope guard
 
