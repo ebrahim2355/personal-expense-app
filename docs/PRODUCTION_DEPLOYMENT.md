@@ -220,6 +220,16 @@ Release builds reject missing/non-HTTPS origins. The production manifest also
 sets `android:usesCleartextTraffic="false"`. Never put PINs, tokens, database
 credentials, or signing passwords in Dart defines.
 
+The release build additionally needs `android/app/google-services.json`, which is
+gitignored and provisioned locally —
+[`apps/mobile/README.md`](../apps/mobile/README.md#local-setup-google-servicesjson)
+has the download step and the Gradle error a missing one produces. It is a client
+identifier rather than a credential, so it is not signing material and needs no
+key ceremony, but it must name the same Firebase project as the API's service
+account. A mismatch is quiet: registration succeeds, the API addresses tokens that
+belong to another project, and the only symptom is Settings continuing to report
+that no push has ever arrived.
+
 ## Android upload/signing key
 
 Create the key outside the repository and back it up in two secure locations.
