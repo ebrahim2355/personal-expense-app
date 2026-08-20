@@ -309,6 +309,101 @@ device is told about it. The two-device notification checklist in
 `docs/REAL_STACK_TESTING.md` remains part of release validation, because
 WorkManager timing cannot be asserted in a test.
 
+### Milestone 11 — closed-app delivery (complete, pending one device measurement)
+
+Milestone 10 delivered notifications that were correct but late: on the target
+phone, with the app closed and the device idle, the fifteen-minute job was
+deferred for hours. Two revisions followed, in order.
+
+First, the polling path was hardened. `adb shell am get-standby-bucket` reported
+**40 (RARE)** with the JobScheduler `WITHIN_QUOTA` constraint unsatisfied, and the
+power-save whitelist turned out to be the only lever an app can pull — an app
+ignoring battery optimisations sits in bucket **5 (EXEMPTED)**, outside both Doze
+and the quota. Delivered:
+
+- a `BackgroundWorkPolicy` platform channel over `PowerManager`, hosted by
+  `MainActivity`, that reads the exemption and opens both the exemption dialog and
+  the app-details page, and answers `false` rather than throwing when an OEM build
+  has removed the activity;
+- the exemption asked for at startup immediately after the notification ask — allow
+  notifications first, then keep them timely — gated on the live platform answer
+  rather than a stored flag, and never recording an ask whose dialog failed to
+  launch;
+- `SyncMetadata.lastBackgroundSyncAt`, written by the background dispatcher for
+  every outcome including an offline one, because it is the only value that can
+  answer whether Android let the worker run at all;
+- Settings advisories naming the option HyperOS actually shows — **No
+  restrictions**, not the recommended-looking default — plus a real
+  **Allow background activity** button and an honest **Re-check**.
+
+That lifted the ceiling but did not remove it: polling alone is fifteen minutes at
+best. So push was moved from out of scope to in scope, for data-only messages
+only. Delivered:
+
+- a `DeviceToken` table addressed by household and member, keyed on the token's
+  SHA-256 so re-registering an unchanged token is a no-op, with a token Google
+  reports as gone marked `disabledAt` rather than deleted;
+- `POST /v1/devices` and `POST /v1/devices/unregister` on their own rate-limit
+  bucket, logging the member and platform but never the token, and neither route
+  reading a device back out;
+- a `HouseholdActivityNotifier` interface with a disabled implementation, so an API
+  with no `FIREBASE_SERVICE_ACCOUNT_BASE64` skips the device query as well as the
+  send and behaves exactly as it did before push existed;
+- the send fired after every mutation transaction has committed, fire-and-forget
+  with a `.catch()` attached, and only for a change that actually landed — a
+  replayed mutation returns the stored receipt's `APPLIED` verbatim, so the batch
+  tracks which ids were answered from a receipt and excludes them;
+- `high` priority, a thirty-minute TTL, one collapse key, and no `notification`
+  block. The client composes every notification from its own database, which is
+  the only reason author suppression and the household-activity switch still
+  apply: the tray draws a server-composed block before any Dart runs, and the
+  switch exists only in device-local `SyncMetadata`;
+- schema v6 on the device — an FCM token fingerprint, its registration instant, and
+  the last push received — plus `PushRegistrationController`, which posts after
+  sign-in and on every `onTokenRefresh`, skips an unchanged token, retries next
+  launch when the POST failed, and deregisters at sign-out while the access token
+  is still valid;
+- one `runBackgroundSync()` body shared by the WorkManager dispatcher and the FCM
+  background handler, so a pushed wake stamps `lastBackgroundSyncAt` and composes
+  notifications exactly as a poll does;
+- a **Push wake** line in Settings, which is the only way to tell a working push
+  from a well-timed poll.
+
+Checks:
+
+```powershell
+npm.cmd run check
+npm.cmd run mobile:check
+```
+
+Exit criterion met in software: the API and Flutter suites pass, including the
+message-shape assertion, token retirement, the member handoff, a mutation applying
+when the send fails outright, and a replayed batch waking nobody.
+
+One measurement is deliberately outstanding rather than assumed. Whether a
+data-only message reaches a package HyperOS/MIUI has force-stopped by a Recents
+swipe is not reliably documented, so it is measured on the device. If nothing
+arrives, the pre-designed fallback is one flag: a content-free tray notification
+("Household Expenses" / "New household activity") with no amount, note, or member
+name — the smallest change that would let the tray wake the app, and the only
+circumstance under which a `notification` block may be sent.
+
+A third revision followed once push was in place: the exemption is no longer asked
+for at startup. Two system screens ahead of the app's own first screen was too much
+to spend, the more so as the second is not a dialog on this phone but a **Battery
+details** screen whose correct answer is not the recommended one. Android's
+documented limits are what make dropping it safe — a high-priority FCM message has
+no execution limits with the screen off and Doze active, and from Android 13 the
+standby bucket no longer governs a high-priority allowance at all — so the
+exemption buys timeliness for the fifteen-minute backstop rather than for push. It
+is now offered only by the Settings advisory, which appears exactly while Android
+reports the exemption missing, so the ask carries its own justification. Nothing
+about it is recorded any more: it can be re-shown at will, so the live platform
+answer is the whole state, and `batteryExemptionRequestedAt` stays in schema v6
+unwritten rather than costing a migration to remove. The accepted cost is that a
+member who never opens Settings stays throttled, and their backstop keeps running
+late.
+
 ### Milestone 8 — Railway staging, CI, and release hardening
 
 Create separate staging/production databases and secrets. Configure root npm
@@ -335,6 +430,11 @@ Health:     /health/ready
 The member provisioning command is intentionally not part of pre-deploy because
 it would re-hash/reset PINs on every release.
 
+`FIREBASE_SERVICE_ACCOUNT_BASE64` is the only optional runtime secret and is set
+in the dashboard rather than declared with a value. It can be added or removed
+without a code change: absent, the API logs "push disabled" once and clients fall
+back to the fifteen-minute poll.
+
 ## 4. Risk register
 
 | Risk | Impact | Mitigation/evidence |
@@ -350,20 +450,30 @@ it would re-hash/reset PINs on every release.
 | Credential leakage | Account/database compromise | Placeholder examples, Pino redaction, no body logging, secret diff review. |
 | Cross-household query regression | Data disclosure | Composite foreign keys, identity-derived filters, explicit isolation integration test. |
 | Railway connection exhaustion | API outages | Configured bounded pool/timeout; observe staging and tune to Railway plan. |
-| Android background delay | Stale remote view | Foreground/manual triggers; honest best-effort WorkManager messaging. |
+| Android background delay | Stale remote view, late notifications | Foreground/manual triggers; a data-only push the moment a change lands; the battery-optimization exemption that moves the app out of the JobScheduler quota; fifteen-minute periodic work as the backstop; honest best-effort WorkManager messaging in Settings and the READMEs. |
 | Whole-taka backfill rewrites history | Silently altered past amounts | One committed migration that rounds to the nearest taka with a one-taka floor; back up before deploying it, and treat it as irreversible. |
 | Two devices opening a period at once | Two open periods, split dashboard | Partial unique index on the open period, `PERIOD_ALREADY_OPEN` rejection, close queued before the next create; real-stack close-convergence scenario. |
 | Loans mistaken for expense settlement | Wrong amount actually paid | Separate tables, separate net total, no shared query; tests assert the settlement figure does not move when a loan is recorded. |
 | Own write announced as the other member's | Every entry self-notifies | Server-assigned `actorMember` on every change row, compared against the member recorded on the device; acknowledging a push deletes the outbox row, so nothing local can make that call. Real-stack scenario 14 asserts the author's device stays silent. |
+| Expense detail leaving the household through Google | Amounts and notes disclosed to a third party | The push payload is `{ "type": "household-activity" }` and nothing else; a `notification` block is never sent. A unit test asserts the exact message shape. |
+| A failed or misconfigured push breaking a mutation | Lost writes, failed requests | The send happens after every transaction commits, is never awaited, and has a `.catch()`; a missing credential selects a disabled notifier. Integration tests assert a mutation applies when the send fails outright. |
+| Replayed mutation waking the household | Notification for a change that never landed | Receipt-answered mutation ids are tracked and excluded, because a replay returns the stored `APPLIED` verbatim. Asserted against real PostgreSQL. |
+| Device token leaking through a log | An outsider can wake the phone | The logger redacts `token` and `privateKey` at every depth; the device routes log the member and platform only. Tokens grant no authority over the account either way. |
 
 ## 5. Scope guard
 
-Spending periods, the lending ledger, whole-taka amounts, and local history
-search are in scope and implemented; do not remove them or reintroduce a
-month-based dashboard range without an explicit product revision.
+Spending periods, the lending ledger, whole-taka amounts, local history search,
+Android notifications for the other member's synced activity, and data-only FCM
+push with background polling as the backstop are in scope and implemented; do not
+remove them or reintroduce a month-based dashboard range without an explicit
+product revision.
 
-Do not add budgets, custom split percentages, receipts, notifications, recurring
-expenses, bank integrations, iOS, web administration, public registration,
-member management, additional households, sub-taka amounts, automatic loans
-derived from expenses, or server-side search or dashboard summaries without
-an explicit product/architecture revision.
+Do not add budgets, custom split percentages, receipts, server-composed
+notification content, recurring expenses, bank integrations, iOS, web
+administration, public registration, member management, additional households,
+sub-taka amounts, automatic loans derived from expenses, or server-side search or
+dashboard summaries without an explicit product/architecture revision.
+
+The one exception to "no server-composed notification content" is the content-free
+fallback described in milestone 11, and only if the force-stop measurement shows a
+data-only message does not arrive.
