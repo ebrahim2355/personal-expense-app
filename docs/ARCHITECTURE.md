@@ -66,7 +66,16 @@ bodies are reconstructed from Zod-validated fields; there is no mass assignment.
   state. Widgets use repository/domain abstractions and primitive status
   streams rather than Drift rows or Dio.
 - `lib/src/background`: network-constrained, best-effort Android WorkManager
-  scheduling and headless synchronization.
+  scheduling and headless synchronization, on a fifteen-minute period. One
+  `runBackgroundSync` body serves both headless entry points — the WorkManager
+  dispatcher and the FCM background handler — so a pushed wake and a scheduled
+  poll do identical work. Each entry point builds its own database, sync, and
+  notification objects, because a background isolate shares nothing with the UI
+  isolate. It also holds the app's only platform channel,
+  `BackgroundWorkPolicy`, which reads and asks for Android's
+  battery-optimization exemption. That channel is hosted by `MainActivity`, so it
+  is usable **only from the UI isolate** — neither headless entry point has a
+  handler on the other end and neither must ever call it.
 - `lib/src/providers.dart`: Riverpod dependency graph. Widgets consume domain
   streams and application services, never raw Drift or Dio objects.
 
@@ -399,6 +408,35 @@ network path:
    plugin, and awaits it. The background isolate exits the moment a run returns,
    so a stream listener could never be relied on to fire; it also builds its own
    notifier, because plugin registrations do not cross isolates.
+
+Timeliness is a separate problem from delivery, and it is Android's to grant.
+Measured on the target phone: with the app closed and the phone idle it sat in App
+Standby bucket 40 (RARE) with the JobScheduler `WITHIN_QUOTA` constraint
+unsatisfied, so the fifteen-minute job was deferred for hours; in active use the
+same install sat in bucket 10 and ran on schedule. The power-save whitelist is the
+only lever an app can pull — an app ignoring battery optimisations moves to bucket
+5 (EXEMPTED), outside both Doze and the quota — so startup asks for it once,
+immediately after the notification permission.
+
+That ask follows the same rules as the permission ask, for the same reasons: gate
+on the live platform answer rather than a stored flag, so an install granted the
+exemption elsewhere self-heals; never record an ask whose dialog failed to launch,
+because recording it would spend the prompt on something nobody saw; and never
+throw, because startup must survive a platform that cannot answer. It differs in
+one respect — this dialog can be re-shown, so the stored timestamp exists to avoid
+nagging rather than to ration a single chance, and Settings can offer a real
+button. Nothing re-reads the answer after that button: Android reports only that
+the dialog opened, so a re-check is the only truthful path.
+
+The exemption is deliberately excluded from the "will notify" decision. It governs
+*when* a notification arrives, not whether it can be posted, and conflating them
+would report notifications as off when they are merely late.
+
+Two limits survive a granted exemption, and both are stated in Settings rather
+than implied away. HyperOS/MIUI force-stops an app cleared from Recents, which
+cancels its jobs until the app is next opened; only the OEM Autostart toggle
+mitigates that and no app can read or set it. And polling alone is fifteen
+minutes at best, which is what the push path below exists to shorten.
 
 ## 8. Money and time ownership
 
