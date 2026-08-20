@@ -79,6 +79,12 @@ The real-stack test deterministically proves:
 13. A sub-taka amount forced into the outbox is refused by the server as
     `INVALID_MUTATION`, the round trip still completes, that one row is marked
     `NEEDS_ATTENTION`, and it is never retried.
+14. Each device is told about the other member's create, edit, and delete, in both
+    directions, and stays silent about its own — including the case that makes
+    this hard, where one run pushes a mutation and then pulls the change the
+    server wrote for it, after the outbox row has already been deleted. A client
+    that installs later receives everything through bootstrap and announces
+    nothing.
 
 ## Interactive local API
 
@@ -172,6 +178,48 @@ have its own app data. Keep the API readiness endpoint open in a third terminal.
 
 Android WorkManager is best effort and cannot guarantee an immediate background
 run. Foreground resume and manual sync are the authoritative manual checks.
+
+### Notification checks
+
+These are the only proof that notifications actually reach a phone: WorkManager
+timing, the Android permission dialog, and the notification tray are all outside
+what any test in this repository can assert.
+
+Automated test 14 already proves the attribution rules, so treat a failure here as
+a delivery, permission, or channel problem rather than a sync problem.
+
+Waiting for background sync is the honest check, but it is slow — up to fifteen
+minutes, and longer on an idle phone. To force a run, find the scheduled job and
+trigger it:
+
+```powershell
+adb -s <ANDROID_DEVICE_ID> shell dumpsys jobscheduler |
+  Select-String com.sumonebrahim.houseexpenses
+adb -s <ANDROID_DEVICE_ID> shell cmd jobscheduler run -f `
+  com.sumonebrahim.houseexpenses <JOB_ID>
+```
+
+1. Install fresh on B and open it: Android asks for notification permission once.
+   Deny it, and confirm login, sync, offline entry, and every screen still behave
+   normally. Reinstall, open, and allow it this time.
+2. Add an expense on A and sync A. Force B's background sync, or background B and
+   wait. B shows one notification naming A's member with the amount, category,
+   payer, and note; A shows nothing at all for its own expense.
+3. Swipe B fully away from the recents list and repeat step 2. The notification
+   still arrives with the app closed.
+4. Leave B offline, add three expenses on A, sync A, then bring B online and sync.
+   B shows three notifications plus a group summary.
+5. Edit, then soft-delete one of them on A, syncing after each. B receives an edit
+   notification and then a delete notification.
+6. Close the spending period on A and sync both. B receives one notification about
+   the period.
+7. Open Settings on B, turn **Household activity** off, and repeat step 2: B
+   receives nothing, and its expense list, totals, and last-success time still
+   update. Turn it back on and confirm notifications resume.
+8. On B, revoke notifications in Android's own app settings. The Settings card
+   reports that Android is blocking them and explains where to re-enable them.
+   Re-enable them there, tap **Re-check**, and confirm the card clears without
+   restarting the app.
 
 When finished, stop and remove only the disposable Compose project:
 
