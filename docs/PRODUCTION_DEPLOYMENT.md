@@ -141,9 +141,14 @@ and note that redeploying an older API cannot restore the old amounts.
 - Package/application ID: `com.sumonebrahim.houseexpenses`.
 - Release version: `1.0.0+1`; increment the build number after `+` for every
   installed update and the semantic version when appropriate.
-- The current Flutter placeholder launcher icons are in
-  `android/app/src/main/res/mipmap-*/ic_launcher.png`. Replace every density with
-  final artwork before broad distribution while keeping the resource name.
+- The launcher icon is the Flutter mark, shipped as `mipmap-*/ic_launcher.png` at
+  the five densities and nothing else — there is no adaptive icon, so every API
+  level composes the same bitmap. `drawable/ic_stat_notification.xml` is the same
+  mark traced as a flat white-on-transparent silhouette for the status bar, which
+  Android tints from alpha alone. If the mark ever changes, both have to change:
+  replace all five densities together, keep the resource names, and re-trace the
+  silhouette rather than pointing the plugin at `@mipmap/ic_launcher`, which posts
+  a solid white blob.
 - Supply the public Railway HTTPS origin at build time. The URL is not a secret:
 
 ```powershell
